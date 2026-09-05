@@ -13,7 +13,7 @@
 /*
 
 ### ⚠️ FAQ section below ⚠️
-### ❗For any excluded process, if the global "New system colors" setting is enabled, please add the excluded processes to the process rules in the mod settings instead.❗
+### ❗For any excluded process, please add it to the "Excluded processes" list in the mod settings instead of Windhawk's advanced tab, especially if "New system colors" is enabled, so default system colors can be restored properly.❗
 
 - ## Theme Customization
 | **Default cleartype text** | **Greyscale text** |
@@ -78,7 +78,7 @@ Changing the theme to the default and vice versa fixes the problem. As a last re
 * ✅ Windows 10 compatible. Background effects use SetWindowCompositionAttribute (AccentPolicy).
   Available modes: Solid Gradient, Transparent Gradient, Blur Behind, Acrylic Blur.
 
-* ℹ️ To exclude specific processes, use Windhawk's built-in process exclusion list in the mod options.
+* ℹ️ To exclude specific processes, add them to the "Excluded processes" list in the mod settings.
 
 * ℹ️ For DwmBlurGlass / glass compositor support, enable "Extend DWM frame into client area".
 
@@ -115,7 +115,7 @@ This is caused by default by the AccentBlur API.❕
       $description: >-
         Translucent background effect applied via SetWindowCompositionAttribute (AccentPolicy).
         Compatible with Windows 10 and Windows 11.
-        Use Windhawk's built-in process exclusion list to exclude specific processes.
+        Add processes to the "Excluded processes" list below to exclude specific processes.
       $options:
       - none: Default (no effect)
       - gradient: Solid gradient color
@@ -141,6 +141,18 @@ This is caused by default by the AccentBlur API.❕
   $description: >-
     Expand the effects to Win32 flyouts (context menus, dropdown menus, tooltips).
      ✨It is recommended to enable this with both background translucent effects and Windows theme custom rendering.
+- excludedProcesses: [""]
+  $name: 🚫 Excluded processes
+  $description: >-
+    List of processes to completely exclude from all mod modifications (no theme rendering, no background effects).
+
+    Entries can be process names or paths, for example:
+
+    mspaint.exe
+
+    C:\Windows\System32\notepad.exe
+
+    If "New system colors" is enabled, default system colors are restored for these processes.
 */
 // ==/WindhawkModSettings==
 
@@ -203,8 +215,15 @@ BOOL g_IsSysThemeDarkMode = ShouldSystemUseDarkMode();
 // Treeview window handle used in our CNscTree_DrawDivider() hook to draw our alpha blended navigation pane divider
 thread_local HWND tl_hwndTreeView = nullptr;
 
-// System color brush cache
+// Flag indicating current process is excluded from all modifications
+BOOL g_isCurrentProcessExcluded = FALSE;
+// Redirect per excluded process the system colors to hardcoded default ones 
+// when custom system colors are applied in global settings.
+BOOL g_DefaultSysColors = FALSE;
+
+// System color brush caches
 std::array<HBRUSH, COLOR_MENUBAR + 1> g_themeCachedCustomSysColorBrushes {nullptr};
+std::array<HBRUSH, COLOR_MENUBAR + 1> g_themeCachedDefaultSysColorBrushes {nullptr};
 SRWLOCK g_SysColorsLock = SRWLOCK_INIT;
 
 // Helpers for resetting theming containers and attributes
@@ -5370,28 +5389,29 @@ LRESULT MyRealDefWindowProcWorker(UINT msg, WPARAM wParam)
     COLORREF sysColorBk = 0;
     COLORREF sysColorTxt = 0;
     HBRUSH sysBrush = nullptr;
+    BOOL isDark = g_IsSysThemeDarkMode && !g_DefaultSysColors;
     if (msg == WM_CTLCOLOR || msg == WM_CTLCOLOREDIT || msg == WM_CTLCOLORLISTBOX)
     {
         sysColorBk = GetSysColor(COLOR_WINDOW);                                 // Default: *gpsi + 4588 (COLOR_WINDOW)
-        sysColorTxt = g_IsSysThemeDarkMode ? RGB(255, 255, 255) : RGB(0, 0, 0); // Default: *gpsi + 4600 (COLOR_WINDOWTEXT)
+        sysColorTxt = isDark ? RGB(255, 255, 255) : RGB(0, 0, 0);               // Default: *gpsi + 4600 (COLOR_WINDOWTEXT)
         sysBrush = GetSysColorBrush(COLOR_WINDOW);                              // Default: *gpsi + 4736 (COLOR_WINDOW)
     }
     else if (msg == WM_CTLCOLORMSGBOX || msg == WM_CTLCOLORDLG || msg == WM_CTLCOLORSTATIC)
     {
         sysColorBk = GetSysColor(COLOR_BTNFACE);                                // Default: *gpsi + 4628 (COLOR_BTNTEXT)
-        sysColorTxt = g_IsSysThemeDarkMode ? RGB(255, 255, 255) : RGB(0, 0, 0); // Default: *gpsi + 4600 (COLOR_WINDOWTEXT)
+        sysColorTxt = isDark ? RGB(255, 255, 255) : RGB(0, 0, 0);               // Default: *gpsi + 4600 (COLOR_WINDOWTEXT)
         sysBrush = GetSysColorBrush(COLOR_BTNFACE);                             // Default: *gpsi + 4816 (COLOR_BTNTEXT)
     }
     else if (msg == WM_CTLCOLORBTN)
     {
         sysColorBk = GetSysColor(COLOR_BTNFACE);                                // Default: *gpsi + 4628 (COLOR_BTNTEXT)
-        sysColorTxt = g_IsSysThemeDarkMode ? RGB(255, 255, 255) : RGB(0, 0, 0); // Default: *gpsi + 4816 (COLOR_BTNTEXT)
+        sysColorTxt = isDark ? RGB(255, 255, 255) : RGB(0, 0, 0);               // Default: *gpsi + 4816 (COLOR_BTNTEXT)
         sysBrush = GetSysColorBrush(COLOR_BTNFACE);                             // Default: *gpsi + 4816 (COLOR_BTNTEXT)
     }
     else if (msg == WM_CTLCOLORSCROLLBAR)
     {
         sysColorBk = GetSysColor(COLOR_BTNHIGHLIGHT);                           // Default: *gpsi + 4648 (COLOR_BTNHIGHLIGHT)
-        sysColorTxt = g_IsSysThemeDarkMode ? RGB(255, 255, 255) : RGB(0, 0, 0); // Default: *gpsi + 4840 (COLOR_BTNTEXT)
+        sysColorTxt = isDark ? RGB(255, 255, 255) : RGB(0, 0, 0);               // Default: *gpsi + 4840 (COLOR_BTNTEXT)
         sysBrush = GetSysColorBrush(COLOR_BTNHIGHLIGHT);                        // Default: *gpsi + 4856 (COLOR_BTNHIGHLIGHT)
     }
 
@@ -5545,8 +5565,8 @@ void __fastcall HookedRenderTooltip(HWND hWnd, HDC hdc, HGDIOBJ *a3)
         GetClientRect(hWnd, &clientRect);
     }
 
-    COLORREF oldTextClr = SetTextColor(hdc, g_IsSysThemeDarkMode ? RGB(255, 255, 255) : RGB(0, 0, 0)); // Default: gpsi + 4660 (COLOR_WINDOWTEXT)
-    COLORREF oldBkClr = SetBkColor(hdc, RGB(0, 0, 0)); // Default: gpsi + 4888 (COLOR_INFOTEXT)
+    COLORREF oldTextClr = SetTextColor(hdc, (g_IsSysThemeDarkMode && !g_DefaultSysColors) ? RGB(255, 255, 255) : RGB(0, 0, 0)); // Default: gpsi + 4660 (COLOR_WINDOWTEXT)
+    COLORREF oldBkClr = SetBkColor(hdc, g_DefaultSysColors ? RGB(255, 255, 255) : RGB(0, 0, 0)); // Default: gpsi + 4888 (COLOR_INFOTEXT)
 
     INT textX = (clientRect.right - textSize.cx) / 2;
     INT textY = (clientRect.bottom - textSize.cy) / 2;
@@ -6120,6 +6140,49 @@ VOID Comdlg32Hooks()
     }
 }
 
+static COLORREF GetDefaultSysColor(INT nIndex)
+{
+    if (nIndex == COLOR_SCROLLBAR)
+        return RGB(200, 200, 200);
+    else if (nIndex == COLOR_BACKGROUND || nIndex == COLOR_MENUTEXT || nIndex == COLOR_WINDOWTEXT || nIndex == COLOR_CAPTIONTEXT
+            || nIndex == COLOR_BTNTEXT || nIndex == COLOR_INACTIVECAPTIONTEXT || nIndex == COLOR_INFOTEXT)
+        return RGB(0, 0, 0);
+    else if (nIndex == COLOR_ACTIVECAPTION)
+        return RGB(153, 180, 209);
+    else if (nIndex == COLOR_INACTIVECAPTION)
+        return RGB(191, 205, 219);
+    else if (nIndex == COLOR_MENU || nIndex == COLOR_BTNFACE || nIndex == COLOR_MENUBAR)  
+        return RGB(240, 240, 240);
+    else if (nIndex == COLOR_WINDOW || nIndex == COLOR_BTNHIGHLIGHT || nIndex == COLOR_INFOBK || nIndex == COLOR_HIGHLIGHTTEXT)
+        return RGB(255, 255, 255);
+    else if (nIndex == COLOR_WINDOWFRAME)
+        return RGB(100, 100, 100);
+    else if (nIndex == COLOR_ACTIVEBORDER)
+        return RGB(180, 180, 180);
+    else if (nIndex == COLOR_INACTIVEBORDER)
+        return RGB(244, 247, 252);
+    else if (nIndex == COLOR_APPWORKSPACE)
+        return RGB(171, 171, 171);
+    else if (nIndex == COLOR_HIGHLIGHT || nIndex == COLOR_MENUHILIGHT)
+        return RGB(0, 120, 212);
+    else if (nIndex == COLOR_BTNSHADOW)
+        return RGB(160, 160, 160);
+    else if (nIndex == COLOR_GRAYTEXT)
+        return RGB(109, 109, 109);
+    else if (nIndex == COLOR_3DDKSHADOW)
+        return RGB(105, 105, 105);
+    else if (nIndex == COLOR_3DLIGHT)
+        return RGB(227, 227, 227);
+    else if (nIndex == COLOR_HOTLIGHT)
+        return RGB(0, 102, 204);
+    else if (nIndex == COLOR_GRADIENTACTIVECAPTION)
+        return RGB(185, 209, 234);
+    else if (nIndex == COLOR_GRADIENTINACTIVECAPTION)
+        return RGB(215, 228, 242);
+
+    return GetSysColor_orig(nIndex);
+}
+
 static COLORREF GetCustomSysColor(INT nIndex)
 {
     if (nIndex == COLOR_SCROLLBAR || nIndex == COLOR_BACKGROUND || nIndex == COLOR_MENU || nIndex == COLOR_WINDOW || nIndex == COLOR_INACTIVEBORDER || nIndex == COLOR_INFOBK ||
@@ -6162,7 +6225,9 @@ static COLORREF GetCustomSysColor(INT nIndex)
 
 COLORREF WINAPI HookedGetSysColor(INT nIndex)
 {
-    if (g_settings.FillBg)
+    if (g_DefaultSysColors)
+        return GetDefaultSysColor(nIndex);
+    else if (g_settings.FillBg)
         return GetCustomSysColor(nIndex);
     return GetSysColor_orig(nIndex);
 }
@@ -6172,17 +6237,19 @@ HBRUSH WINAPI HookedGetSysColorBrush(INT nIndex)
     if (nIndex < 0 || nIndex > COLOR_MENUBAR)
         return GetSysColorBrush_orig(nIndex);
 
-    if (!g_settings.FillBg)
+    if (!g_DefaultSysColors && !g_settings.FillBg)
         return GetSysColorBrush_orig(nIndex);
 
-    HBRUSH cached = g_themeCachedCustomSysColorBrushes[nIndex];
+    auto& cacheArray = g_DefaultSysColors ? g_themeCachedDefaultSysColorBrushes : g_themeCachedCustomSysColorBrushes;
+
+    HBRUSH cached = cacheArray[nIndex];
     if (cached && GetObjectType(cached) == OBJ_BRUSH)
         return cached;
 
     AcquireSRWLockExclusive(&g_SysColorsLock);
-    HBRUSH& ref = g_themeCachedCustomSysColorBrushes[nIndex];
+    HBRUSH& ref = cacheArray[nIndex];
     if (!ref || GetObjectType(ref) != OBJ_BRUSH)
-        ref = CreateSolidBrush(GetCustomSysColor(nIndex));
+        ref = CreateSolidBrush(HookedGetSysColor(nIndex));
     HBRUSH hbr = ref;
     ReleaseSRWLockExclusive(&g_SysColorsLock);
     return hbr;
@@ -6267,6 +6334,120 @@ VOID CustomRenderingHooks()
     WindhawkUtils::SetFunctionHook(GetThemeFont, HookedGetThemeFont, &GetThemeFont_orig);
 }
 
+// Normalizes a path: flips slashes, trims trailing slashes, lowercases.
+std::wstring NormalizeRule(std::wstring path) 
+{
+    if (path.empty()) return path;
+
+    // 1. Normalize slashes
+    for (auto& ch : path)
+        if (ch == L'/') 
+            ch = L'\\';
+
+    // 2. Trim trailing slashes (now guaranteed to be backslashes)
+    while (!path.empty() && path.back() == L'\\')
+        path.pop_back();
+    
+    if (path.empty()) 
+        return path;
+
+    // 3. Lowercase
+    LCMapStringEx(LOCALE_NAME_USER_DEFAULT, LCMAP_LOWERCASE, 
+                  path.c_str(), (INT)path.length(), &path[0], (INT)path.length(), 
+                  nullptr, nullptr, 0);
+
+    return path;
+}
+
+struct CurrentProcessInfo {
+    std::wstring fullPath;   // (e.g. c:\windows\system32\notepad.exe)
+    std::wstring fileName;   // (e.g. notepad.exe)
+    std::wstring directory;  // (e.g. c:\windows\system32)
+};
+
+CurrentProcessInfo GetCurrentProcessInfo() 
+{
+    WCHAR modulePath[MAX_PATH];
+    GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
+
+    CurrentProcessInfo info;
+    info.fullPath = modulePath;
+
+    // Strip Windows long path prefix if present
+    if (info.fullPath.find(L"\\\\?\\") == 0) {
+        info.fullPath.erase(0, 4);
+    }
+
+    // Slashes
+    for (auto& ch : info.fullPath) {
+        if (ch == L'/') ch = L'\\';
+    }
+
+    // Lowercase
+    LCMapStringEx(LOCALE_NAME_USER_DEFAULT, LCMAP_LOWERCASE, 
+                  info.fullPath.c_str(), (INT)info.fullPath.length(), 
+                  &info.fullPath[0], (INT)info.fullPath.length(), 
+                  nullptr, nullptr, 0);
+
+    // Substrings
+    size_t pos = info.fullPath.find_last_of(L'\\');
+    if (pos != std::wstring::npos) {
+        info.fileName = info.fullPath.substr(pos + 1);
+        info.directory = info.fullPath.substr(0, pos);
+    } else {
+        info.fileName = info.fullPath;
+        info.directory = L""; 
+    }
+
+    return info;
+}
+
+bool MatchesProcessRule(const std::wstring& rawEntry, const CurrentProcessInfo& proc) 
+{
+    std::wstring entry = NormalizeRule(rawEntry);
+    if (entry.empty()) return false;
+
+    // Exact full path or directory match
+    if (entry == proc.fullPath || entry == proc.directory)
+        return true;
+
+    // Bare name, e.g. "mspaint.exe"
+    if (entry.find(L'\\') == std::wstring::npos) {
+        return entry == proc.fileName;
+    }
+
+    // Subfolder match
+    std::wstring prefix = entry + L"\\";
+    if (proc.fullPath.find(prefix) == 0)
+        return true;
+
+    return false;
+}
+
+BOOL IsCurrentProcessExcluded()
+{
+    CurrentProcessInfo currProc = GetCurrentProcessInfo();
+
+    for (INT i = 0;; i++) 
+    {
+        auto program = WindhawkUtils::StringSetting(Wh_GetStringSetting(L"excludedProcesses[%d]", i));
+        if (!*program)
+            program = WindhawkUtils::StringSetting(Wh_GetStringSetting(L"excludedPrograms[%d]", i));
+        if (!*program)
+            program = WindhawkUtils::StringSetting(Wh_GetStringSetting(L"ExcludedProcesses[%d]", i));
+        if (!*program)
+            program = WindhawkUtils::StringSetting(Wh_GetStringSetting(L"ExcludedProcesses[%d].process", i));
+
+        if (!*program)
+            break;
+
+        if (MatchesProcessRule(program.get(), currProc))
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
 VOID ApplyHooks()
 {
     if(g_settings.FillBg)
@@ -6279,6 +6460,30 @@ VOID ApplyHooks()
 
 VOID LoadSettings()
 {
+    g_settings.SetSystemColors = Wh_GetIntSetting(L"RenderingMod.Syscolors");
+
+    if (IsCurrentProcessExcluded())
+    {
+        g_isCurrentProcessExcluded = TRUE;
+        // Fully exclude this process: no custom theme rendering, no accent, no blur
+        g_settings.FillBg = FALSE;
+        g_settings.AccentColorize = FALSE;
+        g_settings.BgType = g_settings.Default;
+        g_settings.ExtendFrame = FALSE;
+        g_settings.FlyoutsEffects = FALSE;
+
+        // If New system colors is globally enabled, restore default light system colors for this process
+        if (g_settings.SetSystemColors)
+        {
+            g_DefaultSysColors = TRUE;
+            WindhawkUtils::SetFunctionHook(GetSysColor, HookedGetSysColor, &GetSysColor_orig);
+            WindhawkUtils::SetFunctionHook(GetSysColorBrush, HookedGetSysColorBrush, &GetSysColorBrush_orig);
+            WindhawkUtils::SetFunctionHook(FillRect, HookedFillRect, &FillRect_orig);
+            User32Hooks(TRUE);
+        }
+        return;
+    }
+
     g_settings.AccentColorize = Wh_GetIntSetting(L"RenderingMod.AccentColorControls");
     if (g_settings.AccentColorize)
        g_settings.AccentColorize = GetAccentColor(g_settings.AccentColor);
@@ -6287,7 +6492,6 @@ VOID LoadSettings()
     if (g_settings.FillBg)
         GenerateTextAlphaGammaLUT();
     
-    g_settings.SetSystemColors = Wh_GetIntSetting(L"RenderingMod.Syscolors");
     // SetSysColors API available only in theme customization
     if (g_settings.SetSystemColors && g_settings.FillBg)
         ColorizeSysColors();
@@ -6324,6 +6528,9 @@ BOOL Wh_ModInit(VOID)
 
     LoadSettings();
 
+    if (g_isCurrentProcessExcluded)
+        return TRUE;
+
     HMODULE hModule = GetModuleHandle(L"win32u.dll");
     if (!hModule) 
         return FALSE;
@@ -6339,6 +6546,9 @@ BOOL Wh_ModInit(VOID)
 
 VOID Wh_ModAfterInit() 
 {
+    if (g_isCurrentProcessExcluded)
+        return;
+
     #ifdef _WIN64
         const size_t OFFSET_SAME_TEB_FLAGS = 0x17EE;
     #else
@@ -6358,7 +6568,7 @@ VOID Wh_ModUninit(VOID)
     if (g_settings.FillBg && g_d2dFactory)
         g_d2dFactory->Release();
     
-    if (g_settings.SetSystemColors)
+    if (g_settings.SetSystemColors && !g_isCurrentProcessExcluded)
         RevertSysColors();
 
     for (size_t i = 0; i < g_themeCachedCustomSysColorBrushes.size(); i++) {
@@ -6369,7 +6579,16 @@ VOID Wh_ModUninit(VOID)
         }
     }
 
-    ApplyForExistingWindows();
+    for (size_t i = 0; i < g_themeCachedDefaultSysColorBrushes.size(); i++) {
+        HBRUSH& brush = g_themeCachedDefaultSysColorBrushes[i];
+        if (brush) {
+            DeleteObject(brush);
+            brush = nullptr;
+        }
+    }
+
+    if (!g_isCurrentProcessExcluded)
+        ApplyForExistingWindows();
 }
 
 BOOL Wh_ModSettingsChanged(BOOL* bReload) 
