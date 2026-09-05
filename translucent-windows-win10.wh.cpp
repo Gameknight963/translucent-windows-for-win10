@@ -4906,8 +4906,9 @@ VOID ApplyAccentPolicy(HWND hWnd, ACCENT_STATE state, COLORREF gradientColor)
     accentPolicy.AccentState   = static_cast<INT>(state);
     accentPolicy.GradientColor = static_cast<INT>(gradientColor);
 
-    // Gradient/transparent-gradient modes need the gradient color flag set
-    if (state == ACCENT_STATE_ENABLE_GRADIENT || state == ACCENT_STATE_ENABLE_TRANSPARENTGRADIENT)
+    // Gradient/transparent-gradient modes need the gradient color flag set.
+    // Acrylic and blur modes also require this flag (2) to enable tint coloring!
+    if (gradientColor != 0 || state == ACCENT_STATE_ENABLE_GRADIENT || state == ACCENT_STATE_ENABLE_TRANSPARENTGRADIENT || state == ACCENT_STATE_ENABLE_ACRYLICBLURBEHIND || state == ACCENT_STATE_ENABLE_BLURBEHIND)
         accentPolicy.AccentFlags = ACCENT_FLAG_ENABLE_GRADIENT_COLOR;
 
     WINCOMPATTRDATA wca = {};
@@ -5309,17 +5310,25 @@ BOOL GetColorSetting(LPCWSTR hexColor, COLORREF& outColor)
 {
     if (!hexColor)
         return FALSE;
-    if (hexColor[0] == L'0' && hexColor[1] == L'\0')
+
+    // Trim leading whitespace and quotes
+    while (*hexColor == L' ' || *hexColor == L'\t' || *hexColor == L'\r' || *hexColor == L'\n' || *hexColor == L'\'' || *hexColor == L'\"')
+        hexColor++;
+
+    if (!*hexColor)
+        return FALSE;
+
+    if (hexColor[0] == L'0' && (hexColor[1] == L'\0' || hexColor[1] == L'\'' || hexColor[1] == L'\"' || hexColor[1] == L' '))
     {
         outColor = DWMWA_COLOR_NONE;
         return TRUE;
     }
-    else if (hexColor[0] == L'1' && hexColor[1] == L'\0') 
+    else if (hexColor[0] == L'1' && (hexColor[1] == L'\0' || hexColor[1] == L'\'' || hexColor[1] == L'\"' || hexColor[1] == L' ')) 
     {
         outColor = DWMWA_COLOR_DEFAULT;
         return TRUE;
     }
-    else if (hexColor[0] == L'2' && hexColor[1] == L'\0') 
+    else if (hexColor[0] == L'2' && (hexColor[1] == L'\0' || hexColor[1] == L'\'' || hexColor[1] == L'\"' || hexColor[1] == L' ')) 
     {
         if (g_settings.AccentColorize)
         {
@@ -5333,48 +5342,58 @@ BOOL GetColorSetting(LPCWSTR hexColor, COLORREF& outColor)
         }
         return FALSE;
     }
-    else 
+
+    // Strip optional '#' or '0x' / '0X' prefix
+    if (*hexColor == L'#')
+        hexColor++;
+    else if (hexColor[0] == L'0' && (hexColor[1] == L'x' || hexColor[1] == L'X'))
+        hexColor += 2;
+
+    // Measure remaining hex characters up to closing quote, whitespace, or null
+    size_t len = 0;
+    while (hexColor[len] && hexColor[len] != L' ' && hexColor[len] != L'\t' && hexColor[len] != L'\'' && hexColor[len] != L'\"')
+        len++;
+
+    if (len != 6 && len != 8)
     {
-        size_t len = wcslen(hexColor);
-        if (len != 6 && len != 8)
-        {
-            Wh_Log(L"[ERROR] Invalid color length");
-            return FALSE;
-        }
-        
-        auto hexToByte = [](WCHAR c) -> INT {
-            if (c >= L'0' && c <= L'9') return c - L'0';
-            if (c >= L'A' && c <= L'F') return 10 + (c - L'A');
-            if (c >= L'a' && c <= L'f') return 10 + (c - L'a');
-            return -1;
-        };
-
-        BYTE alpha = 0x00;
-        BYTE rgb[3] = { 0 };
-
-        if (len == 8) 
-        {
-            alpha = 0XFF;
-            INT alphaHigh = hexToByte(hexColor[0]);
-            INT alphaLow  = hexToByte(hexColor[1]);
-            if (alphaHigh < 0 || alphaLow < 0)
-                return FALSE;
-            alpha = (alphaHigh << 4) | alphaLow;
-            hexColor += 2;
-        }
-
-        for (INT i = 0; i < 3; ++i) 
-        {
-            INT high = hexToByte(hexColor[i * 2]);
-            INT low  = hexToByte(hexColor[i * 2 + 1]);
-            if (high < 0 || low < 0)
-                return FALSE;
-            rgb[i] = (high << 4) | low;
-        }
-
-        outColor = (alpha << 24) | (rgb[2] << 16) | (rgb[1] << 8) | rgb[0];
-        return TRUE;
+        Wh_Log(L"[ERROR] Invalid color length: %zu", len);
+        return FALSE;
     }
+
+    auto hexToByte = [](WCHAR c) -> INT {
+        if (c >= L'0' && c <= L'9') return c - L'0';
+        if (c >= L'A' && c <= L'F') return 10 + (c - L'A');
+        if (c >= L'a' && c <= L'f') return 10 + (c - L'a');
+        return -1;
+    };
+
+    BYTE alpha = 0xFF; // Default fully opaque for 6-character hex (RRGGBB)
+    BYTE rgb[3] = { 0 };
+
+    if (len == 8) 
+    {
+        INT alphaHigh = hexToByte(hexColor[0]);
+        INT alphaLow  = hexToByte(hexColor[1]);
+        if (alphaHigh < 0 || alphaLow < 0)
+            return FALSE;
+        alpha = (BYTE)((alphaHigh << 4) | alphaLow);
+        hexColor += 2;
+    }
+
+    for (INT i = 0; i < 3; ++i) 
+    {
+        INT high = hexToByte(hexColor[i * 2]);
+        INT low  = hexToByte(hexColor[i * 2 + 1]);
+        if (high < 0 || low < 0)
+            return FALSE;
+        rgb[i] = (BYTE)((high << 4) | low);
+    }
+
+    outColor = (static_cast<COLORREF>(alpha) << 24) |
+               (static_cast<COLORREF>(rgb[2]) << 16) |
+               (static_cast<COLORREF>(rgb[1]) << 8) |
+               static_cast<COLORREF>(rgb[0]);
+    return TRUE;
 }
 
 // ---------------------------------------------------------------------------------------------
