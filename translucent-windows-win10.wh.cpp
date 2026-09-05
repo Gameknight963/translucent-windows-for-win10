@@ -117,6 +117,7 @@ This is caused by default by the AccentBlur API.❕
       - transparentgradient: Transparent gradient
       - blurbehind: Blur behind (classic DWM blur)
       - acrylicblur: Acrylic blur (Win10 modern blur)
+      - dwmblurbehind: DWM blur behind (DwmEnableBlurBehindWindow)
     - AccentColor: "3A232323"
       $name: 🔷 Accent / gradient color
       $description: >-
@@ -124,12 +125,11 @@ This is caused by default by the AccentBlur API.❕
         Hexadecimal ARGB format: AA RR GG BB, e.g. 3A232323
         (AA = alpha/opacity, RR GG BB = color).
         Used by all effect modes. For blurbehind/acrylicblur this tints the blur.
-    - ExtendFrame: FALSE
+    - ExtendFrame: TRUE
       $name: 🔷 Extend DWM frame into client area
       $description: >-
-        Calls DwmExtendFrameIntoClientArea with {-1,-1,-1,-1} after applying the effect.
-        Also enables full-window DWM glass composition (required for tools like DwmBlurGlass).
-        Enable this if the effect is not visible in the window client area.
+        Calls DwmExtendFrameIntoClientArea with {-1,-1,-1,-1}.
+        Enables full-window DWM glass composition.
   $name: 🔶 Translucent Effects
 - FlyoutsEffects: TRUE
   $name: 🔶 Flyout effects
@@ -302,10 +302,10 @@ struct Settings{
     BOOL TextAlphaBlend = FALSE;
     COLORREF AccentBlurBehindClr = 0x00000000;
     BOOL FlyoutsEffects = FALSE;
-    BOOL ExtendFrame = FALSE;
+    BOOL ExtendFrame = TRUE;
     BOOL Unload = FALSE;
 
-    // Maps directly to ACCENT_STATE enum values
+    // Maps to ACCENT_STATE enum values (with DwmBlurBehind as dedicated mode)
     enum BACKGROUNDTYPE
     {
         Default             = ACCENT_STATE_DISABLED,
@@ -313,6 +313,7 @@ struct Settings{
         TransparentGradient = ACCENT_STATE_ENABLE_TRANSPARENTGRADIENT,
         BlurBehind          = ACCENT_STATE_ENABLE_BLURBEHIND,
         AcrylicBlur         = ACCENT_STATE_ENABLE_ACRYLICBLURBEHIND,
+        DwmBlurBehind       = 100,
     } BgType = Default;
 
 } g_settings;
@@ -4786,15 +4787,17 @@ HRESULT WINAPI HookedGetThemeFont (HTHEME hTheme, HDC hdc, INT iPartId, INT iSta
         // Return if it's not the original font
         if (wcscmp(pFont->lfFaceName, L"Segoe UI"))
             return hr;
-        wcscpy_s(pFont->lfFaceName, LF_FACESIZE, L"Segoe UI Variable Small");
+        wcscpy_s(pFont->lfFaceName, LF_FACESIZE, L"Segoe UI");
         pFont->lfHeight = -13;
         pFont->lfWeight = 400;
         pFont->lfQuality = CLEARTYPE_QUALITY;
         pFont->lfPitchAndFamily = DEFAULT_PITCH;
     }
     else if (ThemeClassName == L"ControlPanelStyle" && iPartId == CPANEL_TITLE && iPropId == TMT_FONT) {
-        wcscpy_s(pFont->lfFaceName, LF_FACESIZE, L"Segoe UI Variable Display Semib");
-        pFont->lfHeight = -24;
+        if (wcscmp(pFont->lfFaceName, L"Segoe UI") == 0) {
+            wcscpy_s(pFont->lfFaceName, LF_FACESIZE, L"Segoe UI");
+            pFont->lfHeight = -24;
+        }
     }
     return hr;
 }
@@ -4821,20 +4824,6 @@ VOID ApplyAccentPolicy(HWND hWnd, ACCENT_STATE state, COLORREF gradientColor)
     if (IsWindowClass(hWnd, L"CASCADIA_HOSTING_WINDOW_CLASS") || IsWindowClass(hWnd, L"ApplicationFrameWindow"))
         return;
 
-    // For blur-based states, prime DWM composition region so the effect is
-    // visible on Win10 regardless of whether the frame is extended.
-    if (state == ACCENT_STATE_ENABLE_BLURBEHIND || state == ACCENT_STATE_ENABLE_ACRYLICBLURBEHIND)
-    {
-        DWM_BLURBEHIND bb = {};
-        bb.fEnable    = TRUE;
-        bb.dwFlags    = DWM_BB_ENABLE | DWM_BB_BLURREGION | DWM_BB_TRANSITIONONMAXIMIZED;
-        HRGN hRgn     = CreateRectRgn(0, 0, -1, -1);
-        bb.hRgnBlur   = hRgn;
-        bb.fTransitionOnMaximized = TRUE;
-        DwmEnableBlurBehindWindow(hWnd, &bb);
-        DeleteObject(hRgn);
-    }
-
     ACCENT_POLICY accentPolicy = {};
     accentPolicy.AccentState   = static_cast<INT>(state);
     accentPolicy.GradientColor = static_cast<INT>(gradientColor);
@@ -4854,6 +4843,17 @@ VOID ApplyAccentPolicy(HWND hWnd, ACCENT_STATE state, COLORREF gradientColor)
 
 VOID EnableBlurBehind(HWND hWnd)
 {
+    if (g_settings.BgType == g_settings.DwmBlurBehind)
+    {
+        if (IsWindowClass(hWnd, L"CASCADIA_HOSTING_WINDOW_CLASS") || IsWindowClass(hWnd, L"ApplicationFrameWindow"))
+            return;
+        DWM_BLURBEHIND bb = {};
+        bb.fEnable = TRUE;
+        bb.dwFlags = DWM_BB_ENABLE;
+        DwmEnableBlurBehindWindow(hWnd, &bb);
+        return;
+    }
+
     ApplyAccentPolicy(hWnd, static_cast<ACCENT_STATE>(g_settings.BgType), g_settings.AccentBlurBehindClr);
 }
 
@@ -4914,17 +4914,7 @@ VOID HandleEffects(HWND hWnd)
         EnableBlurBehind(hWnd);
     }
 
-    // Frame extension is opt-in.
-    // When enabled we also call DwmEnableBlurBehindWindow with a NULL region
-    // (full-window glass) so that DWM compositors like DwmBlurGlass see real
-    // glass instead of an opaque black surface.
     if (g_settings.ExtendFrame && !isFlyoutWindow && g_settings.BgType != g_settings.Default) {
-        // Full-window blur region tells DWM the entire client area is glass
-        DWM_BLURBEHIND bbFull = {};
-        bbFull.fEnable = TRUE;
-        bbFull.dwFlags = DWM_BB_ENABLE;   // no BLURREGION flag = full window
-        DwmEnableBlurBehindWindow(hWnd, &bbFull);
-
         MARGINS margins = {-1, -1, -1, -1};
         DwmExtendFrameIntoClientArea(hWnd, &margins);
     }
@@ -6036,16 +6026,59 @@ VOID Comdlg32Hooks()
     }
 }
 
-// Minimal GetSysColor/GetSysColorBrush hooks (no color modification; just
-// intercept for FillRect pseudo-handle resolution and brush caching)
+static COLORREF GetCustomSysColor(INT nIndex)
+{
+    if (nIndex == COLOR_SCROLLBAR || nIndex == COLOR_BACKGROUND || nIndex == COLOR_MENU || nIndex == COLOR_WINDOW || nIndex == COLOR_INACTIVEBORDER || nIndex == COLOR_INFOBK ||
+        nIndex == COLOR_MENUBAR)
+        return RGB(0, 0, 0);
+    else if (nIndex == COLOR_GRADIENTACTIVECAPTION || nIndex == COLOR_INACTIVECAPTION)
+        return (g_settings.AccentColorize) ? g_settings.AccentColor : RGB(0, 0, 0);
+    else if (nIndex == COLOR_ACTIVECAPTION || nIndex == COLOR_GRADIENTINACTIVECAPTION)
+        return (g_settings.AccentColorize) ? g_settings.AccentColor : RGB(32, 32, 32);
+    else if (nIndex == COLOR_ACTIVEBORDER)
+        return RGB(32, 32, 32);
+    else if (nIndex == COLOR_BTNSHADOW)
+        return RGB(32, 32, 32);
+    else if (nIndex == COLOR_WINDOWFRAME)
+        return RGB(96, 96, 96);
+    else if (nIndex == COLOR_BTNHIGHLIGHT)
+        return RGB(64, 64, 64);
+    else if (nIndex == COLOR_WINDOWTEXT || nIndex == COLOR_MENUTEXT || nIndex == COLOR_CAPTIONTEXT ||
+             nIndex == COLOR_BTNTEXT || nIndex == COLOR_INFOTEXT || nIndex == COLOR_HIGHLIGHTTEXT)
+        return RGB(255, 255, 255);
+    else if (nIndex == COLOR_APPWORKSPACE)
+        return RGB(8, 8, 8);
+    else if (nIndex == COLOR_HIGHLIGHT || nIndex == COLOR_MENUHILIGHT)
+        return (g_settings.AccentColorize) ? g_settings.AccentColor : RGB(0, 120, 215);
+    else if (nIndex == COLOR_BTNFACE)
+        return RGB(1, 1, 1);
+    else if (nIndex == COLOR_GRAYTEXT)
+        return RGB(128, 128, 128);
+    else if (nIndex == COLOR_INACTIVECAPTIONTEXT)
+        return RGB(160, 160, 160);
+    else if (nIndex == COLOR_3DDKSHADOW)
+        return RGB(16, 16, 16);
+    else if (nIndex == COLOR_3DLIGHT)
+        return RGB(4, 4, 4);
+    else if (nIndex == COLOR_HOTLIGHT)
+        return (g_settings.AccentColorize) ? g_settings.AccentColor : RGB(0, 148, 251);
+
+    return GetSysColor_orig(nIndex);
+}
+
 COLORREF WINAPI HookedGetSysColor(INT nIndex)
 {
+    if (g_settings.FillBg)
+        return GetCustomSysColor(nIndex);
     return GetSysColor_orig(nIndex);
 }
 
 HBRUSH WINAPI HookedGetSysColorBrush(INT nIndex)
 {
     if (nIndex < 0 || nIndex > COLOR_MENUBAR)
+        return GetSysColorBrush_orig(nIndex);
+
+    if (!g_settings.FillBg)
         return GetSysColorBrush_orig(nIndex);
 
     HBRUSH cached = g_themeCachedCustomSysColorBrushes[nIndex];
@@ -6055,7 +6088,7 @@ HBRUSH WINAPI HookedGetSysColorBrush(INT nIndex)
     AcquireSRWLockExclusive(&g_SysColorsLock);
     HBRUSH& ref = g_themeCachedCustomSysColorBrushes[nIndex];
     if (!ref || GetObjectType(ref) != OBJ_BRUSH)
-        ref = CreateSolidBrush(GetSysColor_orig(nIndex));
+        ref = CreateSolidBrush(GetCustomSysColor(nIndex));
     HBRUSH hbr = ref;
     ReleaseSRWLockExclusive(&g_SysColorsLock);
     return hbr;
@@ -6123,6 +6156,8 @@ VOID LoadSettings()
         g_settings.BgType = g_settings.BlurBehind;
     else if (0 == wcscmp(strStyle, L"acrylicblur"))
         g_settings.BgType = g_settings.AcrylicBlur;
+    else if (0 == wcscmp(strStyle, L"dwmblurbehind"))
+        g_settings.BgType = g_settings.DwmBlurBehind;
     else
         g_settings.BgType = g_settings.Default;
 

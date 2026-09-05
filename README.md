@@ -8,9 +8,9 @@ Shown with OpenGlass + aero10p1
 
 Changes vs original translucent-windows.wh.cpp:
  
- 1.  Remove Win11-only SystemBackdrop (Mica/Acrylic via DwmSetWindowAttribute)
-  2.  Make DwmExtendFrameIntoClientArea explicitly opt-in via setting
-  3.  Remove SetSysColors and all related infrastructure
-  4.  Remove Process Rules (use Windhawk built-in exclusions instead)
-  5.  Support 5 ACCENT_STATE values (0-4) via SetWindowCompositionAttribute. 
-      extending frame so DwmBlurGlass-style compositors see real glass, not black
+ 1. Remove Win11-only SystemBackdrop (Mica/Acrylic via DwmSetWindowAttribute).
+ 2. DwmExtendFrameIntoClientArea enabled by default (clean frame extension without conflicting blur regions).
+ 3. In-memory GetSysColor and GetSysColorBrush hooks provide transparent dark brushes per hooked process without calling SetSysColors or modifying the registry.
+ 4. Remove Process Rules (use Windhawk's built-in process exclusions instead).
+ 5. Support SetWindowCompositionAttribute (AccentPolicy) modes alongside a dedicated DwmEnableBlurBehindWindow option.
+ 6. Preserve standard fonts and use standard Segoe UI instead of Windows 11-only Segoe UI Variable.
