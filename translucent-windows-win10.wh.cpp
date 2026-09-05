@@ -103,6 +103,11 @@ This is caused by default by the AccentBlur API.❕
       $name: 🔷 Windows theme accent colorizer
       $description: >-
        Paint with accent color parts of windows theme. (Requires Windows theme custom rendering)
+    - Syscolors: FALSE
+      $name: 🔷 New system colors
+      $description: >-
+       Adjusts system colors using SetSysColors to blend with the translucent theme across all system apps.
+       Note: Applied system-wide. Disabling the mod or changing theme restores original colors.
   $name: 🔶 Theme Customization
 - BackgroundEffects:
     - type: none
@@ -300,6 +305,7 @@ struct Settings{
     BOOL AccentColorize = FALSE;
     COLORREF AccentColor = 0xFFFFFFFF;
     BOOL TextAlphaBlend = FALSE;
+    BOOL SetSystemColors = FALSE;
     COLORREF AccentBlurBehindClr = 0x00000000;
     BOOL FlyoutsEffects = FALSE;
     BOOL ExtendFrame = TRUE;
@@ -423,6 +429,8 @@ static decltype(&GetSysColorBrush) GetSysColorBrush_orig = GetSysColorBrush;
 static decltype(&FillRect) FillRect_orig = nullptr;
 static decltype(&DrawThemeEdge) DrawThemeEdge_orig = nullptr;
 static decltype(&DefWindowProcW) DefWindowProc_orig = nullptr;
+static decltype(&DefDlgProcW) DefDlgProcW_orig = nullptr;
+static decltype(&EnableThemeDialogTexture) EnableThemeDialogTexture_orig = nullptr;
 
 VOID NewWindowShown(HWND);
 VOID HandleEffects(HWND hWnd);
@@ -494,6 +502,9 @@ BOOL IsWindowEligible(HWND hWnd)
     // Fixes Snipping Tool recording
     if ((styleEx & WS_EX_NOACTIVATE) || (styleEx & WS_EX_TRANSPARENT))
         return FALSE;
+    // Top-level dialogs with a title bar (e.g. Properties, Run, Folder Options)
+    if (IsWindowClass(hWnd, L"#32770") && hasTitleBar)
+        return TRUE;
     // Most top-level windows
     if ((style & WS_POPUPWINDOW) == WS_POPUPWINDOW || (style & WS_OVERLAPPEDWINDOW) == WS_OVERLAPPEDWINDOW 
        || (styleEx & WS_EX_DLGMODALFRAME) == WS_EX_DLGMODALFRAME) // || (styleEx & WS_EX_CONTROLPARENT) == WS_EX_CONTROLPARENT)
@@ -2596,7 +2607,7 @@ BOOL PaintDropDownArrow(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect, BOOL 
 
 BOOL PaintTab(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 {
-    if (iPartId == TABP_PANE || !g_d2dFactory)
+    if (iPartId == TABP_PANE || iPartId == TABP_BODY || iPartId == TABP_AEROWIZARDBODY || !g_d2dFactory)
         return FALSE;
 
     INT index = (iStateId == TIS_NORMAL) ? 0 
@@ -4455,7 +4466,12 @@ HRESULT WINAPI HookedDrawThemeBackground(
     }
     else if (ThemeClassName == L"Tab")
     {
-        if (PaintTab(hdc, iPartId, iStateId, pRect))
+        if (iPartId == TABP_PANE || iPartId == TABP_BODY || iPartId == TABP_AEROWIZARDBODY)
+        {
+            FillRect(hdc, pRect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+            return S_OK;
+        }
+        else if (PaintTab(hdc, iPartId, iStateId, pRect))
             return S_OK;
     }
     else if (ThemeClassName == L"ComboBox")
@@ -4586,7 +4602,7 @@ HRESULT WINAPI HookedDrawThemeBackground(
     if((ThemeClassName == L"Rebar" && (iPartId == RP_BAND || iPartId == RP_BACKGROUND) && iStateId == 0)
         || (ThemeClassName == L"Header" && (iPartId == THEMECLS_COMMONPROPS_PART || (iPartId == HP_HEADERITEM && (iStateId == HIS_NORMAL || iStateId == HIS_SORTEDNORMAL || iStateId == HIS_ICONNORMAL))))
         || (ThemeClassName == L"TaskDialog" && iPartId == TDLG_FOOTNOTEPANE && iStateId == 0)
-        || (ThemeClassName == L"Tab" && iPartId == TABP_PANE)
+        || (ThemeClassName == L"Tab" && (iPartId == TABP_PANE || iPartId == TABP_BODY || iPartId == TABP_AEROWIZARDBODY))
         || (ThemeClassName == L"Status" && iPartId == THEMECLS_COMMONPROPS_PART)
         || (ThemeClassName == L"Tooltip" && (iPartId == TTP_STANDARD || iPartId == TTP_BALLOON || iPartId == TTP_BALLOONSTEM)))
     {
@@ -4704,6 +4720,16 @@ HRESULT WINAPI HookedDrawThemeBackgroundEx(
         else if (PaintModuleLocation(hdc, iPartId, iStateId, pRect))
             return S_OK;
     }
+    else if (ThemeClassName == L"Tab")
+    {
+        if (iPartId == TABP_PANE || iPartId == TABP_BODY || iPartId == TABP_AEROWIZARDBODY)
+        {
+            FillRect(hdc, pRect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+            return S_OK;
+        }
+        else if (PaintTab(hdc, iPartId, iStateId, pRect))
+            return S_OK;
+    }
 
     HRESULT hr = DrawThemeBackgroundEx_orig(hTheme, hdc, iPartId, iStateId, pRect, pOptions);
 
@@ -4717,6 +4743,7 @@ HRESULT WINAPI HookedDrawThemeBackgroundEx(
         || (ThemeClassName == L"CommandModule" && iPartId == 1 && iStateId == 0)
         || (ThemeClassName == L"TaskDialog" && (iPartId == TDLG_CONTENTPANE || iPartId == TDLG_FOOTNOTESEPARATOR ||  iPartId == TDLG_FOOTNOTEPANE || iPartId == TDLG_SECONDARYPANEL) && iStateId == 0)
         || (ThemeClassName == L"TaskDialog" && iPartId == TDLG_PRIMARYPANEL)
+        || (ThemeClassName == L"Tab" && (iPartId == TABP_PANE || iPartId == TABP_BODY || iPartId == TABP_AEROWIZARDBODY))
         || (ThemeClassName == L"AeroWizard" && (iPartId == AW_TITLEBAR || iPartId == AW_HEADERAREA || iPartId == AW_CONTENTAREA || iPartId == AW_COMMANDAREA))
         || (ThemeClassName == L"CommonItemsDialog" && iPartId == 1)
         || (ThemeClassName == L"ControlPanel" && (iPartId == CPANEL_CONTENTPANE || iPartId == CPANEL_CONTENTPANELINE || iPartId == CPANEL_BANNERAREA || iPartId == CPANEL_LARGECOMMANDAREA || iPartId == CPANEL_SMALLCOMMANDAREA)))
@@ -4891,7 +4918,77 @@ static LRESULT WINAPI HookedDefWindowProcW(HWND hWnd, UINT msg, WPARAM wParam, L
         }
     }   
 
+    if (msg == WM_SHOWWINDOW && wParam == TRUE)
+    {
+        NewWindowShown(hWnd);
+    }
+
+    if (g_settings.FillBg)
+    {
+        switch (msg)
+        {
+            case WM_CTLCOLORMSGBOX:
+            case WM_CTLCOLORDLG:
+            case WM_CTLCOLORSTATIC:
+            case WM_CTLCOLORBTN:
+            case WM_CTLCOLOREDIT:
+            case WM_CTLCOLORLISTBOX:
+            {
+                HDC hdc = (HDC)wParam;
+                SetTextColor(hdc, g_IsSysThemeDarkMode ? RGB(255, 255, 255) : RGB(0, 0, 0));
+                SetBkColor(hdc, RGB(0, 0, 0));
+                return (LRESULT)GetStockObject(BLACK_BRUSH);
+            }
+        }
+    }
+
     return DefWindowProc_orig(hWnd, msg, wParam, lParam);
+}
+
+static LRESULT WINAPI HookedDefDlgProcW(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    if (msg == WM_INITDIALOG || (msg == WM_SHOWWINDOW && wParam == TRUE))
+    {
+        NewWindowShown(hDlg);
+    }
+
+    if (g_settings.FillBg)
+    {
+        switch (msg)
+        {
+            case WM_ERASEBKGND:
+            case WM_PRINTCLIENT:
+            {
+                HDC hdc = (HDC)wParam;
+                RECT rc;
+                GetClientRect(hDlg, &rc);
+                FillRect(hdc, &rc, (HBRUSH)GetStockObject(BLACK_BRUSH));
+                return 1;
+            }
+            case WM_CTLCOLORMSGBOX:
+            case WM_CTLCOLORDLG:
+            case WM_CTLCOLORSTATIC:
+            case WM_CTLCOLORBTN:
+            case WM_CTLCOLOREDIT:
+            case WM_CTLCOLORLISTBOX:
+            {
+                HDC hdc = (HDC)wParam;
+                SetTextColor(hdc, g_IsSysThemeDarkMode ? RGB(255, 255, 255) : RGB(0, 0, 0));
+                SetBkColor(hdc, RGB(0, 0, 0));
+                return (LRESULT)GetStockObject(BLACK_BRUSH);
+            }
+        }
+    }
+
+    return DefDlgProcW_orig(hDlg, msg, wParam, lParam);
+}
+
+static HRESULT WINAPI HookedEnableThemeDialogTexture(HWND hwnd, DWORD dwFlags)
+{
+    if (g_settings.FillBg) {
+        return EnableThemeDialogTexture_orig(hwnd, ETDT_DISABLE);
+    }
+    return EnableThemeDialogTexture_orig(hwnd, dwFlags);
 }
 
 VOID HandleEffects(HWND hWnd)
@@ -6091,6 +6188,49 @@ HBRUSH WINAPI HookedGetSysColorBrush(INT nIndex)
     return hbr;
 }
 
+constexpr INT SysColorElements[] = {
+    COLOR_SCROLLBAR, COLOR_BACKGROUND, COLOR_ACTIVECAPTION, COLOR_INACTIVECAPTION,
+    COLOR_MENU, COLOR_WINDOW, COLOR_WINDOWFRAME, COLOR_MENUTEXT, COLOR_WINDOWTEXT,
+    COLOR_CAPTIONTEXT, COLOR_ACTIVEBORDER, COLOR_INACTIVEBORDER, COLOR_APPWORKSPACE,
+    COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_BTNFACE, COLOR_BTNSHADOW, COLOR_GRAYTEXT,
+    COLOR_BTNTEXT, COLOR_INACTIVECAPTIONTEXT, COLOR_BTNHIGHLIGHT, COLOR_3DDKSHADOW,
+    COLOR_3DLIGHT, COLOR_INFOTEXT, COLOR_INFOBK, COLOR_GRADIENTACTIVECAPTION,
+    COLOR_GRADIENTINACTIVECAPTION, COLOR_MENUHILIGHT, COLOR_MENUBAR, COLOR_HOTLIGHT
+};
+
+VOID ColorizeSysColors()
+{
+    // Stop recalling SetSysColors if syscolor changes have been applied.
+    // SetSysColors redraws all top level windows causing flickering.
+    if (GetSysColor_orig(COLOR_WINDOW) == RGB(0, 0, 0))
+        return;
+
+    COLORREF aNewColors[ARRAYSIZE(SysColorElements)];
+    for (UINT i = 0; i < ARRAYSIZE(SysColorElements); i++)
+        aNewColors[i] = GetCustomSysColor(SysColorElements[i]);
+
+    SetSysColors(ARRAYSIZE(SysColorElements), SysColorElements, aNewColors);
+}
+
+VOID RevertSysColors()
+{
+    if (GetSysColor_orig(COLOR_WINDOW) != RGB(0, 0, 0))
+        return;
+
+    HTHEME hThemeSysMetrics = nullptr;
+    if (!SetThemeHandle(nullptr, hThemeSysMetrics, L"sysmetrics"))
+        return;
+
+    COLORREF aNewColors[ARRAYSIZE(SysColorElements)];
+    for (UINT i = 0; i < ARRAYSIZE(SysColorElements); i++)
+        aNewColors[i] = GetThemeSysColor(hThemeSysMetrics, SysColorElements[i]);
+
+    SetSysColors(ARRAYSIZE(SysColorElements), SysColorElements, aNewColors);
+
+    CloseThemeData(hThemeSysMetrics);
+    hThemeSysMetrics = nullptr;
+}
+
 VOID CustomRenderingHooks()
 {
     InitDirect2D();
@@ -6098,6 +6238,8 @@ VOID CustomRenderingHooks()
         CplDuiHook();
     #endif
     WindhawkUtils::SetFunctionHook(DefWindowProc, HookedDefWindowProcW, &DefWindowProc_orig);
+    WindhawkUtils::SetFunctionHook(DefDlgProcW, HookedDefDlgProcW, &DefDlgProcW_orig);
+    WindhawkUtils::SetFunctionHook(EnableThemeDialogTexture, HookedEnableThemeDialogTexture, &EnableThemeDialogTexture_orig);
     WindhawkUtils::SetFunctionHook(GetThemeColor, HookedGetColorTheme, &GetThemeColor_orig);   
     WindhawkUtils::SetFunctionHook(DrawThemeBackground, HookedDrawThemeBackground, &DrawThemeBackground_orig);
     WindhawkUtils::SetFunctionHook(DrawThemeBackgroundEx, HookedDrawThemeBackgroundEx, &DrawThemeBackgroundEx_orig);
@@ -6107,10 +6249,12 @@ VOID CustomRenderingHooks()
     if (g_IsSysThemeDarkMode)
         Comdlg32Hooks();
     WinbrandHooks();
-    User32Hooks(FALSE);
-    WindhawkUtils::SetFunctionHook(FillRect, HookedFillRect, &FillRect_orig);
-    WindhawkUtils::SetFunctionHook(GetSysColor, HookedGetSysColor, &GetSysColor_orig);
-    WindhawkUtils::SetFunctionHook(GetSysColorBrush, HookedGetSysColorBrush, &GetSysColorBrush_orig);
+    User32Hooks(g_settings.SetSystemColors);
+    if (!g_settings.SetSystemColors) {
+        WindhawkUtils::SetFunctionHook(FillRect, HookedFillRect, &FillRect_orig);
+        WindhawkUtils::SetFunctionHook(GetSysColor, HookedGetSysColor, &GetSysColor_orig);
+        WindhawkUtils::SetFunctionHook(GetSysColorBrush, HookedGetSysColorBrush, &GetSysColorBrush_orig);
+    }
     WindhawkUtils::SetFunctionHook(DrawTextWithGlow, HookedDrawTextWithGlow, &DrawTextWithGlow);
     WindhawkUtils::SetFunctionHook(DrawTextW, HookedDrawTextW, &DrawTextW_orig);
     WindhawkUtils::SetFunctionHook(ExtTextOutW, HookedExtTextOutW, &ExtTextOutW_orig);
@@ -6143,6 +6287,10 @@ VOID LoadSettings()
     if (g_settings.FillBg)
         GenerateTextAlphaGammaLUT();
     
+    g_settings.SetSystemColors = Wh_GetIntSetting(L"RenderingMod.Syscolors");
+    // SetSysColors API available only in theme customization
+    if (g_settings.SetSystemColors && g_settings.FillBg)
+        ColorizeSysColors();
     
     auto strStyle = WindhawkUtils::StringSetting(Wh_GetStringSetting(L"BackgroundEffects.type"));
     if (0 == wcscmp(strStyle, L"gradient"))
@@ -6210,6 +6358,9 @@ VOID Wh_ModUninit(VOID)
     if (g_settings.FillBg && g_d2dFactory)
         g_d2dFactory->Release();
     
+    if (g_settings.SetSystemColors)
+        RevertSysColors();
+
     for (size_t i = 0; i < g_themeCachedCustomSysColorBrushes.size(); i++) {
         HBRUSH& brush = g_themeCachedCustomSysColorBrushes[i];
         if (brush) {
