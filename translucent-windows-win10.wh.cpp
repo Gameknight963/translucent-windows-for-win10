@@ -4784,14 +4784,11 @@ HRESULT WINAPI HookedGetThemeFont (HTHEME hTheme, HDC hdc, INT iPartId, INT iSta
     
     if (ThemeClassName == L"Menu" && iPropId == TMT_FONT) 
     {
-        // Return if it's not the original font
+        // Preserve the theme's native font face and size metrics
         if (wcscmp(pFont->lfFaceName, L"Segoe UI"))
             return hr;
-        wcscpy_s(pFont->lfFaceName, LF_FACESIZE, L"Segoe UI");
-        pFont->lfHeight = -13;
-        pFont->lfWeight = 400;
         pFont->lfQuality = CLEARTYPE_QUALITY;
-        pFont->lfPitchAndFamily = DEFAULT_PITCH;
+        return hr;
     }
     else if (ThemeClassName == L"ControlPanelStyle" && iPartId == CPANEL_TITLE && iPropId == TMT_FONT) {
         if (wcscmp(pFont->lfFaceName, L"Segoe UI") == 0) {
