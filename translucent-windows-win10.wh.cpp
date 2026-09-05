@@ -1,7 +1,7 @@
 // ==WindhawkMod==
 // @id              translucent-windows
 // @name            Translucent Windows
-// @description     Enables native translucent effects in Windows 11
+// @description     Enables native translucent effects in Windows 10
 // @version         1.8.0
 // @author          Undisputed00x
 // @github          https://github.com/Undisputed00x
@@ -485,6 +485,9 @@ BOOL isWindowFlyout(HWND hWnd)
 
 BOOL IsWindowEligible(HWND hWnd) 
 {   
+    if (g_isCurrentProcessExcluded)
+        return FALSE;
+
     // store the treeview handle for alpha blending when drawing the divider in the navigation pane hook.
     if (g_settings.FillBg && IsWindowClass(hWnd, L"SysTreeView32"))
         tl_hwndTreeView = hWnd;
@@ -5229,13 +5232,6 @@ VOID RestoreWindowCustomizations(HWND hWnd)
 
     if (SetWindowCompositionAttribute)
         SetWindowCompositionAttribute(hWnd, &winCompositionAttrib);
-    
-    // Reset accent policy to disabled
-    ACCENT_POLICY accentOff = {};
-    accentOff.AccentState = ACCENT_STATE_DISABLED;
-    WINCOMPATTRDATA wcaOff = { WCA_ACCENT_POLICY, &accentOff, sizeof(accentOff) };
-    if (SetWindowCompositionAttribute)
-        SetWindowCompositionAttribute(hWnd, &wcaOff);
 
     // Manually restore frame extension
     if(!(IsWindowClass(hWnd,  L"TaskManagerWindow") && g_settings.BgType != g_settings.Default))
@@ -6339,19 +6335,39 @@ std::wstring NormalizeRule(std::wstring path)
 {
     if (path.empty()) return path;
 
-    // 1. Normalize slashes
+    // 1. Trim leading and trailing whitespace
+    while (!path.empty() && (path.front() == L' ' || path.front() == L'\t'))
+        path.erase(0, 1);
+    while (!path.empty() && (path.back() == L' ' || path.back() == L'\t'))
+        path.pop_back();
+
+    // 2. Trim surrounding quotes
+    if (path.size() >= 2 && ((path.front() == L'"' && path.back() == L'"') || (path.front() == L'\'' && path.back() == L'\''))) {
+        path = path.substr(1, path.size() - 2);
+    }
+
+    // 3. Expand environment variables (e.g. %SystemRoot%, %ProgramFiles%)
+    if (path.find(L'%') != std::wstring::npos) {
+        WCHAR expanded[MAX_PATH * 2];
+        DWORD len = ExpandEnvironmentStringsW(path.c_str(), expanded, ARRAYSIZE(expanded));
+        if (len > 0 && len < ARRAYSIZE(expanded)) {
+            path = expanded;
+        }
+    }
+
+    // 4. Normalize slashes
     for (auto& ch : path)
         if (ch == L'/') 
             ch = L'\\';
 
-    // 2. Trim trailing slashes (now guaranteed to be backslashes)
+    // 5. Trim trailing slashes (now guaranteed to be backslashes)
     while (!path.empty() && path.back() == L'\\')
         path.pop_back();
     
     if (path.empty()) 
         return path;
 
-    // 3. Lowercase
+    // 6. Lowercase
     LCMapStringEx(LOCALE_NAME_USER_DEFAULT, LCMAP_LOWERCASE, 
                   path.c_str(), (INT)path.length(), &path[0], (INT)path.length(), 
                   nullptr, nullptr, 0);
@@ -6565,8 +6581,10 @@ VOID Wh_ModUninit(VOID)
         DeleteAtom(g_explorerStylerNoBackgroundEffectAtom);
      
     g_settings.Unload = TRUE;
-    if (g_settings.FillBg && g_d2dFactory)
+    if (g_settings.FillBg && g_d2dFactory) {
         g_d2dFactory->Release();
+        g_d2dFactory = nullptr;
+    }
     
     if (g_settings.SetSystemColors && !g_isCurrentProcessExcluded)
         RevertSysColors();
