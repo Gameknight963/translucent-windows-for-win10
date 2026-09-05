@@ -24,4 +24,4 @@ Shown with OpenGlass + aero10.1
 
 Copy the contents from [here](https://github.com/Gameknight963/translucent-windows-for-win10/blob/master/translucent-windows-win10.wh.cpp) and put them in a new mod.
 
-I might make a PR to add this to windhawk-mods sometime later, but it's just a paint to do
+I might make a PR to add this to windhawk-mods sometime later, but it's just a pain to do
