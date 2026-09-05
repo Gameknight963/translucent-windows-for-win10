@@ -6,7 +6,7 @@ The original mod technically already works with Windows 10, but this port has be
 
 Shown with OpenGlass + aero10.1
 
-![](https://i.imgur.com/Rfe39LW.png)
+![file explorer](https://i.imgur.com/Rfe39LW.png)
 
 ## Deviations from translucent-windows:
  
@@ -19,9 +19,14 @@ Shown with OpenGlass + aero10.1
 7. **Configurable Dark Mode Titlebars**: Added the `DarkModeTitlebars` setting to toggle immersive dark titlebars, with support across all Windows 10 builds (falls back to attribute 19 on builds 1809–1909). Previously this was forced on
 8. **Immersive Menu Fix** Fixed immersive context menu fonts being 1pt too large by not overridding `pFont->lfHeight`
 
-
 ## Installation
 
 Copy the contents from [here](https://github.com/Gameknight963/translucent-windows-for-win10/blob/master/translucent-windows-win10.wh.cpp) and put them in a new mod.
 
 I might make a PR to add this to windhawk-mods sometime later, but it's just a pain to do
+
+### Other screenshots:
+
+![Acrylic](https://i.imgur.com/CAAiJKe.png)
+
+![Blur](https://i.imgur.com/EmWJNxY.png)
