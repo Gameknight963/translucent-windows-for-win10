@@ -118,6 +118,11 @@ This is caused by default by the AccentBlur API.❕
       $description: >-
        Gamma curve multiplier for text alpha (10 to 30, default 14 for 1.4 gamma).
        Higher values make text bolder and thicker.
+    - DarkModeTitlebars: TRUE
+      $name: 🔷 Immersive dark mode titlebars
+      $description: >-
+       Enables native immersive dark mode titlebars on eligible windows when the system is using a dark theme.
+       Disable this to keep default titlebars (e.g. if using custom visual styles or accent colored titlebars).
   $name: 🔶 Theme Customization
 - BackgroundEffects:
     - type: none
@@ -196,8 +201,6 @@ This is caused by default by the AccentBlur API.❕
 #define STDCALL  __stdcall
 #define _STDCALL L"__stdcall"
 #endif
-
-static constexpr UINT ENABLE = 1;
 
 // Get DPI value from the primary monitor without dependance to DPI-aware API
 // TODO: Get DPI per window monitor
@@ -337,6 +340,7 @@ struct Settings{
     BOOL ClearTypeText = FALSE;
     INT TextGamma = 14;
     BOOL SetSystemColors = FALSE;
+    BOOL DarkModeTitlebars = TRUE;
     COLORREF AccentBlurBehindClr = 0x00000000;
     BOOL FlyoutsEffects = FALSE;
     BOOL ExtendFrame = TRUE;
@@ -5041,15 +5045,20 @@ static HRESULT WINAPI HookedEnableThemeDialogTexture(HWND hwnd, DWORD dwFlags)
     return EnableThemeDialogTexture_orig(hwnd, dwFlags);
 }
 
+VOID SetWindowImmersiveDarkMode(HWND hWnd, BOOL enable)
+{
+    if (FAILED(DwmSetWindowAttribute(hWnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &enable, sizeof(BOOL)))) {
+        constexpr DWORD DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19;
+        DwmSetWindowAttribute(hWnd, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, &enable, sizeof(BOOL));
+    }
+}
+
 VOID HandleEffects(HWND hWnd)
 {
     BOOL isFlyoutWindow = isWindowFlyout(hWnd);
 
-    if (g_IsSysThemeDarkMode) {
-        if (FAILED(DwmSetWindowAttribute(hWnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &ENABLE, sizeof(UINT)))) {
-            constexpr DWORD DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19;
-            DwmSetWindowAttribute(hWnd, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, &ENABLE, sizeof(UINT));
-        }
+    if (g_settings.DarkModeTitlebars && g_IsSysThemeDarkMode) {
+        SetWindowImmersiveDarkMode(hWnd, TRUE);
     }
 
     if (g_settings.BgType != g_settings.Default)
@@ -5246,6 +5255,9 @@ VOID RestoreWindowCustomizations(HWND hWnd)
     ACCENT_POLICY accentPolicy = {};
     WINCOMPATTRDATA winCompositionAttrib = {};
     DWM_BLURBEHIND dwmBlurBehindData = {};
+
+    // Restore immersive dark mode titlebar
+    SetWindowImmersiveDarkMode(hWnd, FALSE);
 
     // Disabling AccentBlurBehind temp workaround
     dwmBlurBehindData.fEnable = FALSE;
@@ -6514,6 +6526,7 @@ VOID LoadSettings()
         g_settings.BgType = g_settings.Default;
         g_settings.ExtendFrame = FALSE;
         g_settings.FlyoutsEffects = FALSE;
+        g_settings.DarkModeTitlebars = FALSE;
 
         // If New system colors is globally enabled, restore default light system colors for this process
         if (g_settings.SetSystemColors)
@@ -6536,6 +6549,7 @@ VOID LoadSettings()
     g_settings.TextGamma = Wh_GetIntSetting(L"RenderingMod.TextGamma");
     if (g_settings.TextGamma < 10 || g_settings.TextGamma > 50)
         g_settings.TextGamma = 14;
+    g_settings.DarkModeTitlebars = Wh_GetIntSetting(L"RenderingMod.DarkModeTitlebars");
 
     if (g_settings.FillBg)
         GenerateTextAlphaGammaLUT();
