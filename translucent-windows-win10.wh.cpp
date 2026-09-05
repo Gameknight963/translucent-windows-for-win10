@@ -124,7 +124,7 @@ This is caused by default by the AccentBlur API.❕
       $name: 🔷 Background effect
       $description: >-
         Translucent background effect applied via SetWindowCompositionAttribute (AccentPolicy).
-        Compatible with Windows 10 and Windows 11.
+        Compatible with Windows 10.
         Add processes to the "Excluded processes" list below to exclude specific processes.
       $options:
       - none: Default (no effect)
@@ -442,7 +442,6 @@ using NtUserCreateWindowEx_t = HWND(WINAPI*)(DWORD, PUNICODE_STRING, LPCWSTR, PU
 NtUserCreateWindowEx_t NtUserCreateWindowEx_Original;
 
 static decltype(&DwmExtendFrameIntoClientArea) DwmExtendFrameIntoClientArea_orig = nullptr;
-static decltype(&DwmSetWindowAttribute) DwmSetWindowAttribute_orig = nullptr;
 
 static decltype(&DrawTextW) DrawTextW_orig = nullptr;
 static decltype(&ExtTextOutW) ExtTextOutW_orig = nullptr;
@@ -773,12 +772,6 @@ D2D1_COLOR_F IsAccentColorPossibleD2D(BYTE R, BYTE G, BYTE B, AccentColorShade A
     }
     else
         return MyD2D1Color(R, G, B);
-}
-
-HRESULT WINAPI HookedDwmSetWindowAttribute(HWND hWnd, DWORD dwAttribute, LPCVOID pvAttribute, DWORD cbAttribute)
-{
-    // Pure passthrough on Win10 - effects applied via SetWindowCompositionAttribute.
-    return DwmSetWindowAttribute_orig(hWnd, dwAttribute, pvAttribute, cbAttribute);
 }
 
 HRESULT WINAPI HookedDwmExtendFrameIntoClientArea(HWND hWnd, const MARGINS* pMarInset)
@@ -5052,8 +5045,12 @@ VOID HandleEffects(HWND hWnd)
 {
     BOOL isFlyoutWindow = isWindowFlyout(hWnd);
 
-    if (g_IsSysThemeDarkMode)
-        DwmSetWindowAttribute(hWnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &ENABLE, sizeof(UINT));
+    if (g_IsSysThemeDarkMode) {
+        if (FAILED(DwmSetWindowAttribute(hWnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &ENABLE, sizeof(UINT)))) {
+            constexpr DWORD DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19;
+            DwmSetWindowAttribute(hWnd, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, &ENABLE, sizeof(UINT));
+        }
+    }
 
     if (g_settings.BgType != g_settings.Default)
     {
@@ -5084,10 +5081,6 @@ VOID NewWindowShown(HWND hWnd)
 
 VOID DwmExpandFrameIntoClientAreaHook() {
     WindhawkUtils::SetFunctionHook(DwmExtendFrameIntoClientArea, HookedDwmExtendFrameIntoClientArea, &DwmExtendFrameIntoClientArea_orig);
-}
-
-VOID DwmSetWindowAttributeHook() {
-    WindhawkUtils::SetFunctionHook(DwmSetWindowAttribute, HookedDwmSetWindowAttribute, &DwmSetWindowAttribute_orig); 
 }
 
 HRESULT WINAPI HookedGetThemeTransitionDuration(HTHEME hTheme, INT iPartId, INT iStateIdFrom, INT iStateIdTo, INT iPropId, DWORD *pdwDuration)
@@ -6504,7 +6497,6 @@ VOID ApplyHooks()
     if(g_settings.FillBg)
         CustomRenderingHooks();
     if (g_settings.BgType != g_settings.Default) {
-        DwmSetWindowAttributeHook();
         DwmExpandFrameIntoClientAreaHook();
     }        
 }
@@ -6577,15 +6569,15 @@ VOID LoadSettings()
 
 BOOL Wh_ModInit(VOID) 
 {
-    if (InExplorerProcess())
-        g_explorerStylerNoBackgroundEffectAtom = AddAtom(L"WindhawkFileExplorerStylerNoBackgroundEffect");
-    if (InTaskManagerProcess())
-        g_InsideTaskMgrProc = TRUE;
-
     LoadSettings();
 
     if (g_isCurrentProcessExcluded)
         return TRUE;
+
+    if (InExplorerProcess())
+        g_explorerStylerNoBackgroundEffectAtom = AddAtom(L"WindhawkFileExplorerStylerNoBackgroundEffect");
+    if (InTaskManagerProcess())
+        g_InsideTaskMgrProc = TRUE;
 
     HMODULE hModule = GetModuleHandle(L"win32u.dll");
     if (!hModule) 
@@ -6617,8 +6609,10 @@ VOID Wh_ModAfterInit()
 
 VOID Wh_ModUninit(VOID) 
 {
-    if (g_explorerStylerNoBackgroundEffectAtom)
+    if (g_explorerStylerNoBackgroundEffectAtom) {
         DeleteAtom(g_explorerStylerNoBackgroundEffectAtom);
+        g_explorerStylerNoBackgroundEffectAtom = 0;
+    }
      
     g_settings.Unload = TRUE;
     if (g_settings.FillBg && g_d2dFactory) {
