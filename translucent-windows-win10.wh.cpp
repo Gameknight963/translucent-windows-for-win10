@@ -108,6 +108,16 @@ This is caused by default by the AccentBlur API.❕
       $description: >-
        Adjusts system colors using SetSysColors to blend with the translucent theme across all system apps.
        Note: Applied system-wide. Disabling the mod or changing theme restores original colors.
+    - ClearTypeText: FALSE
+      $name: 🔷 Subpixel ClearType text
+      $description: >-
+       Preserves subpixel ClearType antialiasing on translucent windows instead of converting to grayscale.
+       Works best with light/white text on dark backgrounds.
+    - TextGamma: 14
+      $name: 🔷 Text weight / thickness
+      $description: >-
+       Gamma curve multiplier for text alpha (10 to 30, default 14 for 1.4 gamma).
+       Higher values make text bolder and thicker.
   $name: 🔶 Theme Customization
 - BackgroundEffects:
     - type: none
@@ -324,6 +334,8 @@ struct Settings{
     BOOL AccentColorize = FALSE;
     COLORREF AccentColor = 0xFFFFFFFF;
     BOOL TextAlphaBlend = FALSE;
+    BOOL ClearTypeText = FALSE;
+    INT TextGamma = 14;
     BOOL SetSystemColors = FALSE;
     COLORREF AccentBlurBehindClr = 0x00000000;
     BOOL FlyoutsEffects = FALSE;
@@ -835,10 +847,11 @@ std::wstring GetThemeClass(HTHEME hTheme)
 static std::array<BYTE, 256> g_textAlphaGammaLUT = {0};
 VOID GenerateTextAlphaGammaLUT()
 {
+    float gamma = (g_settings.TextGamma >= 10 && g_settings.TextGamma <= 50) ? (g_settings.TextGamma / 10.0f) : 1.4f;
     for (INT i = 0; i < 256; ++i) 
     {
         float a = i * (1.0f / 255.0f);
-        float g = powf(a, 1.0f / 1.4f);
+        float g = powf(a, 1.0f / gamma);
         g_textAlphaGammaLUT[i] = (BYTE)(g * 255.0f + 0.5f);
     }
 }
@@ -955,17 +968,39 @@ BOOL WINAPI HookedExtTextOutW(
         RGBQUAD* row = pPixels + (cy * rowWidth);
         for (INT cx = 0; cx < textRectWidth; ++cx) {
             RGBQUAD& p = row[cx];
-            // Alpha extraction + gamma correction
-            BYTE luma = (BYTE)((p.rgbBlue + (p.rgbGreen << 1) + p.rgbRed) >> 2);
-            BYTE txtA = g_textAlphaGammaLUT[luma];
-            if (txtA == 0 && !(options & ETO_OPAQUE))
-                continue;
-            // handle background transparency only for selected text
-            BYTE bgWeight = HighlightedText ? (255 - txtA) : 0;
-            p.rgbBlue     = (((GetBValue(origTxtClr) * txtA) + (GetBValue(origBkClr) * bgWeight)) >> 8);
-            p.rgbGreen    = (((GetGValue(origTxtClr) * txtA) + (GetGValue(origBkClr) * bgWeight)) >> 8);
-            p.rgbRed      = (((GetRValue(origTxtClr) * txtA) + (GetRValue(origBkClr) * bgWeight)) >> 8);
-            p.rgbReserved = bgWeight ? 255 : txtA;
+
+            if (g_settings.ClearTypeText) {
+                // ClearType subpixel mode: preserve per-channel subpixel values
+                BYTE maxSub = std::max({ p.rgbRed, p.rgbGreen, p.rgbBlue });
+                if (maxSub == 0 && !(options & ETO_OPAQUE))
+                    continue;
+
+                BYTE txtA = g_textAlphaGammaLUT[maxSub];
+                BYTE bgWeight = HighlightedText ? (255 - txtA) : 0;
+
+                // Modulate the subpixel values by text color
+                // For white text (255, 255, 255), this retains p.rgbRed, p.rgbGreen, p.rgbBlue verbatim
+                BYTE r = (BYTE)((GetRValue(origTxtClr) * p.rgbRed) >> 8);
+                BYTE g = (BYTE)((GetGValue(origTxtClr) * p.rgbGreen) >> 8);
+                BYTE b = (BYTE)((GetBValue(origTxtClr) * p.rgbBlue) >> 8);
+
+                p.rgbRed      = (BYTE)(r + ((GetRValue(origBkClr) * bgWeight) >> 8));
+                p.rgbGreen    = (BYTE)(g + ((GetGValue(origBkClr) * bgWeight) >> 8));
+                p.rgbBlue     = (BYTE)(b + ((GetBValue(origBkClr) * bgWeight) >> 8));
+                p.rgbReserved = bgWeight ? 255 : txtA;
+            } else {
+                // Grayscale antialiasing mode
+                BYTE luma = (BYTE)((p.rgbBlue + (p.rgbGreen << 1) + p.rgbRed) >> 2);
+                BYTE txtA = g_textAlphaGammaLUT[luma];
+                if (txtA == 0 && !(options & ETO_OPAQUE))
+                    continue;
+                // handle background transparency only for selected text
+                BYTE bgWeight = HighlightedText ? (255 - txtA) : 0;
+                p.rgbBlue     = (((GetBValue(origTxtClr) * txtA) + (GetBValue(origBkClr) * bgWeight)) >> 8);
+                p.rgbGreen    = (((GetGValue(origTxtClr) * txtA) + (GetGValue(origBkClr) * bgWeight)) >> 8);
+                p.rgbRed      = (((GetRValue(origTxtClr) * txtA) + (GetRValue(origBkClr) * bgWeight)) >> 8);
+                p.rgbReserved = bgWeight ? 255 : txtA;
+            }
         }
     }
 
@@ -6505,6 +6540,11 @@ VOID LoadSettings()
        g_settings.AccentColorize = GetAccentColor(g_settings.AccentColor);
 
     g_settings.FillBg = Wh_GetIntSetting(L"RenderingMod.ThemeBackground");
+    g_settings.ClearTypeText = Wh_GetIntSetting(L"RenderingMod.ClearTypeText");
+    g_settings.TextGamma = Wh_GetIntSetting(L"RenderingMod.TextGamma");
+    if (g_settings.TextGamma < 10 || g_settings.TextGamma > 50)
+        g_settings.TextGamma = 14;
+
     if (g_settings.FillBg)
         GenerateTextAlphaGammaLUT();
     
