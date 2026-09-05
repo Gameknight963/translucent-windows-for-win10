@@ -1,10 +1,10 @@
 // ==WindhawkMod==
-// @id              translucent-windows
+// @id              translucent-windows-win10
 // @name            Translucent Windows
 // @description     Enables native translucent effects in Windows 10
-// @version         1.8.0
-// @author          Undisputed00x
-// @github          https://github.com/Undisputed00x
+// @version         1.0.0
+// @author          Gameknight963 🐠
+// @github          https://github.com/Gameknight963
 // @include         *
 // @compilerOptions -ldwmapi -luxtheme -lcomctl32 -lgdi32 -ld2d1 -lmsimg32 -lshcore -lversion -ffp-exception-behavior=maytrap
 // ==/WindhawkMod==
@@ -16,38 +16,31 @@
 ### ❗For any excluded process, please add it to the "Excluded processes" list in the mod settings instead of Windhawk's advanced tab, especially if "New system colors" is enabled, so default system colors can be restored properly.❗
 
 - ## Theme Customization
-| **Default cleartype text** | **Greyscale text** |
+| **Greyscale text** | **Cleartype text** |
 |:---:|:---:|
-| ![Cleartype](https://i.imgur.com/utajxyq.png) | ![Greyscale](https://i.imgur.com/0OelxZH.png) |
-
-| **Default text** | **Alpha blended text** |
-|:---:|:---:|
-| ![Default](https://i.imgur.com/ZgrJMgP.png) | ![Composited](https://i.imgur.com/4lQU2a4.png) |
+| ![Greyscale](https://i.imgur.com/0OelxZH.png) | ![Cleartype](https://i.imgur.com/utajxyq.png) | 
 
 | **Default themed controls** | **Custom themed controls** |
 |:---:|:---:|
-| ![Default Theme](https://i.imgur.com/8hYI1DZ.png) | ![Custom Theme](https://i.imgur.com/vWbelew.png) |
+| ![Default Theme](https://i.imgur.com/pkzdJLM.png) | ![Custom Theme](https://i.imgur.com/zIxMOiw.png) |
 
 - ## Translucent effects
-| **Blur (AccentBlurBehind)** | **Acrylic (SystemBackdrop)** |
+| **Blur behind** | **Acrylic blur behind** |
 |:---:|:---:|
-| ![AccentBlurBehind](https://i.imgur.com/tSf5ztk.png) | ![Acrylic SystemBackdrop](https://i.imgur.com/YNktLTu.png) |
+| ![*Blur behind](https://i.imgur.com/EmWJNxY.png) | ![Acrylic blur behind*](https://i.imgur.com/CAAiJKe.png) |
 
-| **Mica (SystemBackdrop)** | **MicaAlt (SystemBackdrop)** |
+| **Transparent gradient** | **Gradient** |
 |:---:|:---:|
-| ![Mica](https://i.imgur.com/1ciJJck.png) | ![MicaTabbed](https://i.imgur.com/5Dxj5PS.png) |
+| ![Transparent gradient](https://i.imgur.com/cP2u90G.png) | ![Gradient](https://i.imgur.com/a9wklWa.png) |
 
 ## Credits 
 The custom theme is a close copy of the Rectify 11 theme created by [WinExperiments](https://github.com/WinExperiments).
 #
 The inspiration for this mod came from the awesome Windows effects customization projects of [Maplespe](https://github.com/Maplespe) and [ALTaleX531](https://github.com/ALTaleX531).
 #
-Thanks also to [m417z](https://github.com/m417z) for his help and input in completing the mod.
+Thanks to [Undisputed00x](https://github.com/Undisputed00x) for his awesome original mod targetting Windows 11.
 
 ## FAQ
-
-* ⚠️Use Windows 11 File Explorer Styler mod and select the Translucent Explorer11 theme
-in order to get translucent WinUI parts of the new file explorer.⚠️
 
 * ❗The new system colors setting option adjusts the [system colors](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsyscolor) 
 in order to blend with the background translucency / custom theme rendering. 
@@ -67,7 +60,7 @@ This is because most GDI rendering operations ignore or do not preserve alpha va
     - Transparency effects enabled
     - Energy saver disabled
 #
-* ⚠️The background effects do not affect most modern windows (UWP/WinUI), 
+* ⚠️The background effects do not affect modern windows (UWP/WinUI), 
 apps with different front-end rendering (e.g Qt, Electron, Chromium etc.. programs) and native windows with hardcoded colors.⚠️
 
 * ⚠️If parts of the Windows UI colors remain modified after disabling the modification, this is happening when new system colors are applied in a selected Windows custom theme.
@@ -75,17 +68,14 @@ Changing the theme to the default and vice versa fixes the problem. As a last re
 
 * ⚠️ARM64 system is only partially supported.⚠️
 
-* ✅ Windows 10 compatible. Background effects use SetWindowCompositionAttribute (AccentPolicy).
-  Available modes: Solid Gradient, Transparent Gradient, Blur Behind, Acrylic Blur.
-
 * ℹ️ To exclude specific processes, add them to the "Excluded processes" list in the mod settings.
-
-* ℹ️ For DwmBlurGlass / glass compositor support, enable "Extend DWM frame into client area".
 
 * ❕The blur effect may show a bleeding effect at the edges of a window when maximized or snapped to the edge of the screen. 
 This is caused by default by the AccentBlur API.❕
 
 * ✨The mod works best on the default dark theme.✨
+
+* ✨ Compatible with [OpenGlass](https://github.com/ALTaleX531/OpenGlass) / [DWMBlurGlass](https://github.com/Maplespe/DWMBlurGlass). Use the DWM Blur Behind option to get Aero Glass with these shaders installed. ✨
 
 */
 // ==/WindhawkModReadme==
@@ -107,12 +97,10 @@ This is caused by default by the AccentBlur API.❕
       $name: 🔷 New system colors
       $description: >-
        Adjusts system colors using SetSysColors to blend with the translucent theme across all system apps.
-       Note: Applied system-wide. Disabling the mod or changing theme restores original colors.
     - ClearTypeText: FALSE
       $name: 🔷 Subpixel ClearType text
       $description: >-
        Preserves subpixel ClearType antialiasing on translucent windows instead of converting to grayscale.
-       Works best with light/white text on dark backgrounds.
     - TextGamma: 14
       $name: 🔷 Text weight / thickness
       $description: >-
@@ -122,42 +110,40 @@ This is caused by default by the AccentBlur API.❕
       $name: 🔷 Immersive dark mode titlebars
       $description: >-
        Enables native immersive dark mode titlebars on eligible windows when the system is using a dark theme.
-       Disable this to keep default titlebars (e.g. if using custom visual styles or accent colored titlebars).
   $name: 🔶 Theme Customization
 - BackgroundEffects:
     - type: none
       $name: 🔷 Background effect
       $description: >-
         Translucent background effect applied via SetWindowCompositionAttribute (AccentPolicy).
-        Compatible with Windows 10.
         Add processes to the "Excluded processes" list below to exclude specific processes.
+        Note: DWM blur behind only works with a compatible DWM shader (see FAQ)
       $options:
       - none: Default (no effect)
       - gradient: Solid gradient color
       - transparentgradient: Transparent gradient
-      - blurbehind: Blur behind (classic DWM blur)
-      - acrylicblur: Acrylic blur (Win10 modern blur)
+      - blurbehind: Blur behind
+      - acrylicblur: Acrylic blur behind
       - dwmblurbehind: DWM blur behind (DwmEnableBlurBehindWindow)
-    - AccentColor: "3A232323"
+    - AccentColor: "27950366"
       $name: 🔷 Accent / gradient color
       $description: >-
         Color blended with the background effect.
-        Hexadecimal ARGB format: AA RR GG BB, e.g. 3A232323
-        (AA = alpha/opacity, RR GG BB = color).
-        Used by all effect modes. For blurbehind/acrylicblur this tints the blur.
+        Hexadecimal ARGB format, e.g. 27950366
     - ExtendFrame: TRUE
       $name: 🔷 Extend DWM frame into client area
       $description: >-
-        Calls DwmExtendFrameIntoClientArea with {-1,-1,-1,-1}.
-        Enables full-window DWM glass composition.
+        Calls DwmExtendFrameIntoClientArea with {-1,-1,-1,-1},
+        Enables full-window DWM composition. Some background effects may be 
+        incompatible with this option.
   $name: 🔶 Translucent Effects
 - FlyoutsEffects: TRUE
   $name: 🔶 Flyout effects
   $description: >-
     Expand the effects to Win32 flyouts (context menus, dropdown menus, tooltips).
      ✨It is recommended to enable this with both background translucent effects and Windows theme custom rendering.
-- excludedProcesses: [""]
-  $name: 🚫 Excluded processes
+- excludedProcesses: ["DesignToolsServer.exe", "devenv.exe"]
+  $name: 🔴 Excluded processes
   $description: >-
     List of processes to completely exclude from all mod modifications (no theme rendering, no background effects).
 
@@ -254,7 +240,6 @@ constexpr UINT THEMECLS_COMMONPROPS_PART = 0;
 
 ATOM g_explorerStylerNoBackgroundEffectAtom = 0;
 
-// ── AccentPolicy types (must precede Settings) ───────────────────────────────
 struct ACCENT_POLICY
 {
     INT AccentState;
