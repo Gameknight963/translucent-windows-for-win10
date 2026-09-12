@@ -93,6 +93,14 @@ This is caused by default by the AccentBlur API.❕
       $name: 🔷 Windows theme accent colorizer
       $description: >-
        Paint with accent color parts of windows theme. (Requires Windows theme custom rendering)
+    - HighlightColor: windowsblue
+      $name: 🔷 Selection highlight color
+      $description: >-
+       Highlight color for selected and hovered items in list views, tree views, explorer items, menus, headers, and classic controls.
+      $options:
+      - hardcoded: Hardcoded gray
+      - windowsblue: Windows blue (default)
+      - accent: System accent color
     - Syscolors: FALSE
       $name: 🔷 New system colors
       $description: >-
@@ -341,6 +349,13 @@ struct Settings{
         AcrylicBlur         = ACCENT_STATE_ENABLE_ACRYLICBLURBEHIND,
         DwmBlurBehind       = 100,
     } BgType = Default;
+
+    enum HIGHLIGHT_COLOR_TYPE
+    {
+        Highlight_Hardcoded,
+        Highlight_WindowsBlue,
+        Highlight_Accent,
+    } HighlightColorType = Highlight_WindowsBlue;
 
 } g_settings;
 
@@ -761,6 +776,59 @@ D2D1_COLOR_F IsAccentColorPossibleD2D(BYTE R, BYTE G, BYTE B, AccentColorShade A
     }
     else
         return MyD2D1Color(R, G, B);
+}
+
+COLORREF GetThemeHighlightColor()
+{
+    switch (g_settings.HighlightColorType)
+    {
+        case Settings::Highlight_Hardcoded:
+            return RGB(144, 144, 144);
+        case Settings::Highlight_WindowsBlue:
+            return RGB(0, 120, 215);
+        case Settings::Highlight_Accent:
+        default:
+            if (g_settings.AccentColor != 0xFFFFFFFF && g_settings.AccentColor != 0)
+                return g_settings.AccentColor;
+            COLORREF clr = RGB(0, 120, 215);
+            if (GetAccentColor(clr))
+                return clr;
+            return RGB(0, 120, 215);
+    }
+}
+
+D2D1_COLOR_F GetHighlightColorD2D(BYTE A, BYTE R_blue, BYTE G_blue, BYTE B_blue, AccentColorShade accentShade = SystemAccentColorBase)
+{
+    switch (g_settings.HighlightColorType)
+    {
+        case Settings::Highlight_Hardcoded:
+            return MyD2D1Color(A, 144, 144, 144);
+        case Settings::Highlight_WindowsBlue:
+            return MyD2D1Color(A, R_blue, G_blue, B_blue);
+        case Settings::Highlight_Accent:
+        default:
+        {
+            BYTE R = GetRValue(g_AccentPalette.Colors[(INT)accentShade]);
+            BYTE G = GetGValue(g_AccentPalette.Colors[(INT)accentShade]);
+            BYTE B = GetBValue(g_AccentPalette.Colors[(INT)accentShade]);
+            if (R == 0 && G == 0 && B == 0)
+            {
+                COLORREF clr = GetThemeHighlightColor();
+                return MyD2D1Color(A, GetRValue(clr), GetGValue(clr), GetBValue(clr));
+            }
+            return MyD2D1Color(A, R, G, B);
+        }
+    }
+}
+
+D2D1_COLOR_F GetHighlightColorD2D(BYTE A, AccentColorShade accentShade = SystemAccentColorBase)
+{
+    return GetHighlightColorD2D(A, 0, 120, 215, accentShade);
+}
+
+D2D1_COLOR_F GetHighlightColorD2D(AccentColorShade accentShade = SystemAccentColorBase)
+{
+    return GetHighlightColorD2D(255, 0, 120, 215, accentShade);
 }
 
 HRESULT WINAPI HookedDwmExtendFrameIntoClientArea(HWND hWnd, const MARGINS* pMarInset)
@@ -2271,11 +2339,11 @@ BOOL CThemeCache::CacheCommandlinkButton(INT iStateId, INT stateIndex)
             pRenderTarget->FillRoundedRectangle(&roundedRect, brush.Get());
             break;
         case CMDLS_HOT:
-            pRenderTarget->CreateSolidColorBrush(MyD2D1Color(96, 144, 144, 144), &brush);
+            pRenderTarget->CreateSolidColorBrush(GetHighlightColorD2D(96, SystemAccentColorLight2), &brush);
             pRenderTarget->FillRoundedRectangle(&roundedRect, brush.Get());
             break;
         case CMDLS_PRESSED:
-            pRenderTarget->CreateSolidColorBrush(MyD2D1Color(64, 144, 144, 144), &brush);
+            pRenderTarget->CreateSolidColorBrush(GetHighlightColorD2D(64, SystemAccentColorLight1), &brush);
             pRenderTarget->FillRoundedRectangle(&roundedRect, brush.Get());
             break;
         case CMDLS_DEFAULTED:
@@ -2679,7 +2747,7 @@ BOOL CThemeCache::CacheTab(INT iStateId, INT stateIndex)
     }
     else if (iStateId == TIS_HOT || iStateId == TIS_DISABLED)
     {
-        D2D1_COLOR_F fillColor = (iStateId == TIS_HOT) ? MyD2D1Color(128, 96, 96, 96) : MyD2D1Color(96, 96, 96);
+        D2D1_COLOR_F fillColor = (iStateId == TIS_HOT) ? GetHighlightColorD2D(64, SystemAccentColorLight2) : MyD2D1Color(96, 96, 96);
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
         pRenderTarget->CreateSolidColorBrush(fillColor, &brush);
         D2D1_ROUNDED_RECT tabRect = D2D1::RoundedRect(D2D1::RectF(0, 0, width, height), cornerRadius, cornerRadius);
@@ -2687,6 +2755,12 @@ BOOL CThemeCache::CacheTab(INT iStateId, INT stateIndex)
     }
     else if (iStateId == TIS_SELECTED || iStateId == TIS_FOCUSED)
     {
+        D2D1_COLOR_F selectedBg = GetHighlightColorD2D(48, SystemAccentColorBase);
+        Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bgBrush;
+        pRenderTarget->CreateSolidColorBrush(selectedBg, &bgBrush);
+        D2D1_ROUNDED_RECT tabRect = D2D1::RoundedRect(D2D1::RectF(0, 0, width, height), cornerRadius, cornerRadius);
+        pRenderTarget->FillRoundedRectangle(tabRect, bgBrush.Get());
+
         const FLOAT desiredHeight = 2.0f + round(scale);       
         const FLOAT widthPadding  = 5.0f;
         const FLOAT verticalOffset = 1.0f;      
@@ -2699,7 +2773,7 @@ BOOL CThemeCache::CacheTab(INT iStateId, INT stateIndex)
 
         D2D1_ROUNDED_RECT pillRect = D2D1::RoundedRect(D2D1::RectF(pillLeft, pillTop, pillRight, pillBottom),pillRadius, pillRadius);
 
-        D2D1_COLOR_F pillColor = IsAccentColorPossibleD2D(102, 206, 255, SystemAccentColorLight2);
+        D2D1_COLOR_F pillColor = GetHighlightColorD2D(255, 102, 206, 255, SystemAccentColorLight2);
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
         pRenderTarget->CreateSolidColorBrush(pillColor, &brush);
         pRenderTarget->FillRoundedRectangle(pillRect, brush.Get());
@@ -2777,8 +2851,8 @@ BOOL CThemeCache::CacheTrackBarThumb(INT iPartId, INT iStateId, INT stateIndex)
     if (FAILED(CreateBoundD2DRenderTarget(g_themeCache.trackbarthumb[stateIndex], &rc, g_d2dFactory, &pRenderTarget)))
         return FALSE;
     
-    D2D1_COLOR_F fillColor = (iStateId == TUBS_HOT) ? IsAccentColorPossibleD2D(102, 206, 255, SystemAccentColorLight3) : 
-                             (iStateId == TUBS_PRESSED) ? IsAccentColorPossibleD2D(60, 110, 180, SystemAccentColorLight1) :
+    D2D1_COLOR_F fillColor = (iStateId == TUBS_HOT) ? GetHighlightColorD2D(255, 102, 206, 255, SystemAccentColorLight3) : 
+                             (iStateId == TUBS_PRESSED) ? GetHighlightColorD2D(255, 60, 110, 180, SystemAccentColorLight1) :
                              (iStateId == TUBS_DISABLED) ? MyD2D1Color(96, 96, 96) : MyD2D1Color(64, 64, 64);
     D2D1_ROUNDED_RECT body = D2D1::RoundedRect(D2D1::RectF(0, 0, width, height), cornerRadius, cornerRadius);
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
@@ -2824,8 +2898,8 @@ BOOL CThemeCache::CacheTrackBarPointedThumb(INT iPartId, INT iStateId, INT state
     if (FAILED(CreateBoundD2DRenderTarget(g_themeCache.trackbarthumb[stateIndex], &rc, g_d2dFactory, &pRenderTarget)))
         return FALSE;
     
-    D2D1_COLOR_F fillColor = (iStateId == TUBS_HOT) ? IsAccentColorPossibleD2D(102, 206, 255, SystemAccentColorLight3) : 
-                             (iStateId == TUBS_PRESSED) ? IsAccentColorPossibleD2D(60, 110, 180, SystemAccentColorLight1) :
+    D2D1_COLOR_F fillColor = (iStateId == TUBS_HOT) ? GetHighlightColorD2D(255, 102, 206, 255, SystemAccentColorLight3) : 
+                             (iStateId == TUBS_PRESSED) ? GetHighlightColorD2D(255, 60, 110, 180, SystemAccentColorLight1) :
                              (iStateId == TUBS_DISABLED) ? MyD2D1Color(96, 96, 96) : MyD2D1Color(64, 64, 64);
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
     pRenderTarget->CreateSolidColorBrush(fillColor, &brush);
@@ -3179,25 +3253,25 @@ BOOL CThemeCache::CacheListItem(INT iPartId, INT iStateId, INT stateIndex)
         switch (iStateId)
         {
             case LISS_NORMAL:
-                fillColor = MyD2D1Color(96, 144, 144, 144);
-                borderColor = IsAccentColorPossibleD2D(102, 206, 255, SystemAccentColorLight2);
+                fillColor = GetHighlightColorD2D(96, SystemAccentColorLight2);
+                borderColor = GetHighlightColorD2D(255, 102, 206, 255, SystemAccentColorLight2);
                 break;
             case LISS_HOT:
-                fillColor = MyD2D1Color(96, 144, 144, 144);
+                fillColor = GetHighlightColorD2D(96, SystemAccentColorLight2);
                 break;
             case LISS_SELECTED:
-                fillColor = MyD2D1Color(64, 144, 144, 144);
+                fillColor = GetHighlightColorD2D(64, SystemAccentColorBase);
                 break;
             case LISS_DISABLED:
-                fillColor = MyD2D1Color(96, 144, 144, 144);
-                borderColor = IsAccentColorPossibleD2D(102, 206, 255, SystemAccentColorLight2);
+                fillColor = GetHighlightColorD2D(96, SystemAccentColorLight2);
+                borderColor = GetHighlightColorD2D(255, 102, 206, 255, SystemAccentColorLight2);
                 break;
             case LISS_SELECTEDNOTFOCUS:
-                fillColor = MyD2D1Color(32, 144, 144, 144);
+                fillColor = GetHighlightColorD2D(32, SystemAccentColorBase);
                 break;
             case LISS_HOTSELECTED:
-                fillColor = MyD2D1Color(64, 144, 144, 144);
-                borderColor = IsAccentColorPossibleD2D(102, 206, 255, SystemAccentColorLight2);
+                fillColor = GetHighlightColorD2D(64, SystemAccentColorBase);
+                borderColor = GetHighlightColorD2D(255, 102, 206, 255, SystemAccentColorLight2);
                 break;
         }
         
@@ -3259,21 +3333,21 @@ BOOL CThemeCache::CacheListGroupHeader(INT iPartId, INT iStateId, INT stateIndex
             case LVGH_OPENHOT: case LVGH_OPENSELECTEDHOT:
             case LVGH_OPENSELECTEDNOTFOCUSEDHOT: case LVGH_OPENMIXEDSELECTIONHOT:
             case LVGH_CLOSEHOT:
-                fillColor = MyD2D1Color(96, 144, 144, 144);
+                fillColor = GetHighlightColorD2D(96, SystemAccentColorLight2);
                 break;
             case LVGH_CLOSESELECTED:
             case LVGH_CLOSEMIXEDSELECTION:
-                fillColor = MyD2D1Color(64, 144, 144, 144);
+                fillColor = GetHighlightColorD2D(64, SystemAccentColorBase);
                 break;
             case LVGHL_CLOSEMIXEDSELECTIONHOT:
             case LVGHL_CLOSESELECTEDHOT:
-                fillColor = MyD2D1Color(64, 144, 144, 144);
+                fillColor = GetHighlightColorD2D(64, SystemAccentColorBase);
                 break;
             case LVGHL_CLOSESELECTEDNOTFOCUSED:
                 borderColor = MyD2D1Color(255, 255, 255);
                 break;
             case LVGHL_CLOSESELECTEDNOTFOCUSEDHOT:
-                fillColor = MyD2D1Color(96, 144, 144, 144);
+                fillColor = GetHighlightColorD2D(96, SystemAccentColorLight2);
                 borderColor = MyD2D1Color(255, 255, 255);
                 break;
             default:
@@ -3350,11 +3424,11 @@ BOOL CThemeCache::CacheTreeViewButton(INT iPartId, INT iStateId, INT stateIndex)
     }
     else if (iPartId == TVP_TREEITEM)
     {
-        D2D1_COLOR_F fillColor = (iStateId == TREIS_HOT)              ? MyD2D1Color(96, 144, 144, 144) : 
-                                 (iStateId == TREIS_SELECTED)         ? MyD2D1Color(64, 144, 144, 144) :
-                                 (iStateId == TREIS_SELECTEDNOTFOCUS) ? MyD2D1Color(32, 144, 144, 144) :
+        D2D1_COLOR_F fillColor = (iStateId == TREIS_HOT)              ? GetHighlightColorD2D(96, SystemAccentColorLight2) : 
+                                 (iStateId == TREIS_SELECTED)         ? GetHighlightColorD2D(64, SystemAccentColorBase) :
+                                 (iStateId == TREIS_SELECTEDNOTFOCUS) ? GetHighlightColorD2D(32, SystemAccentColorBase) :
                                                                         //TREIS_HOTSELECTED
-                                                                        MyD2D1Color(64, 144, 144, 144); 
+                                                                        GetHighlightColorD2D(64, SystemAccentColorBase); 
 
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
         pRenderTarget->CreateSolidColorBrush(fillColor, &brush);
@@ -3363,7 +3437,7 @@ BOOL CThemeCache::CacheTreeViewButton(INT iPartId, INT iStateId, INT stateIndex)
         if (iStateId == TREIS_SELECTED || iStateId == TREIS_SELECTEDNOTFOCUS || iStateId == TREIS_HOTSELECTED)
         {
             FLOAT pillOffsetY = 7, pillWidth = 2.f + round(scale), pillRadius = 0.f;
-            brush->SetColor(IsAccentColorPossibleD2D(102, 206, 255, SystemAccentColorLight2));
+            brush->SetColor(GetHighlightColorD2D(255, 102, 206, 255, SystemAccentColorLight2));
             pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y + pillOffsetY, x + pillWidth, height - pillOffsetY), pillRadius, pillRadius),brush.Get());
         }
     }
@@ -3506,17 +3580,17 @@ BOOL CThemeCache::CacheItemsView(INT iPartId, INT iStateId, INT stateIndex)
         {
             D2D1_ROUNDED_RECT rect = D2D1::RoundedRect(D2D1::RectF(x, y, width, height), cornerRadius, cornerRadius);
             Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
-            pRenderTarget->CreateSolidColorBrush(IsAccentColorPossibleD2D(0, 96, 188, SystemAccentColorLight2), &brush);
+            pRenderTarget->CreateSolidColorBrush(GetHighlightColorD2D(255, 0, 96, 188, SystemAccentColorLight2), &brush);
             pRenderTarget->FillRoundedRectangle(rect, brush.Get());
 
-            brush->SetColor(IsAccentColorPossibleD2D(0, 120, 215, SystemAccentColorLight2));
+            brush->SetColor(GetHighlightColorD2D(255, 0, 120, 215, SystemAccentColorLight2));
             pRenderTarget->DrawRoundedRectangle(rect, brush.Get(), 2.0f * scale);
         }
         else if (iStateId == 2 || iStateId == 4)
         {
             D2D1_ROUNDED_RECT rect = D2D1::RoundedRect(D2D1::RectF(x, y, width, height), cornerRadius, cornerRadius);
             Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> fillBrush;
-            pRenderTarget->CreateSolidColorBrush(IsAccentColorPossibleD2D(0, 96, 188, SystemAccentColorLight2), &fillBrush);
+            pRenderTarget->CreateSolidColorBrush(GetHighlightColorD2D(255, 0, 96, 188, SystemAccentColorLight2), &fillBrush);
             pRenderTarget->FillRoundedRectangle(rect, fillBrush.Get());
         }
     }
@@ -3534,7 +3608,7 @@ BOOL CThemeCache::CacheItemsView(INT iPartId, INT iStateId, INT stateIndex)
         {
             D2D1_ROUNDED_RECT rect = D2D1::RoundedRect(D2D1::RectF(x-1, y-1, width+1, height+1), cornerRadius, cornerRadius);
             Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> fillBrush;
-            pRenderTarget->CreateSolidColorBrush(MyD2D1Color(128, 144, 144, 144), &fillBrush);
+            pRenderTarget->CreateSolidColorBrush(GetHighlightColorD2D(128, SystemAccentColorBase), &fillBrush);
             pRenderTarget->FillRoundedRectangle(rect, fillBrush.Get());
         }
     }
@@ -3577,11 +3651,11 @@ BOOL CThemeCache::CacheHeader(INT iStateId, INT stateIndex)
     {
         case HIS_HOT: case HIS_SORTEDHOT:
         case HIS_ICONHOT: case HIS_ICONSORTEDHOT:
-            fillColor = MyD2D1Color(96, 144, 144, 144);
+            fillColor = GetHighlightColorD2D(96, SystemAccentColorLight2);
             break;
         case HIS_PRESSED: case HIS_SORTEDPRESSED:
         case HIS_ICONPRESSED: case HIS_ICONSORTEDPRESSED:
-            fillColor = MyD2D1Color(64, 144, 144, 144);
+            fillColor = GetHighlightColorD2D(64, SystemAccentColorLight1);
             break;
         case HIS_NORMAL: case HIS_SORTEDNORMAL:
         case HIS_ICONNORMAL: case HIS_ICONSORTEDNORMAL:
@@ -3670,15 +3744,17 @@ BOOL CThemeCache::CacheModuleButton(INT iStateId, INT stateIndex)
     FLOAT Border2pxOffset = 0.f;
     switch (iStateId) 
     {
-        case 2: fillColor = MyD2D1Color(96, 144, 144, 144);
+        case 2: fillColor = GetHighlightColorD2D(96, SystemAccentColorLight2);
             break;
-        case 3: fillColor = MyD2D1Color(64, 144, 144, 144);
+        case 3: fillColor = GetHighlightColorD2D(64, SystemAccentColorBase);
             break;
         case 4: Border2pxOffset = 1.f * scale;
+            borderColor = GetHighlightColorD2D(255, 102, 206, 255, SystemAccentColorLight2);
             break;
         case 5: 
-            fillColor = MyD2D1Color(96, 144, 144, 144);
+            fillColor = GetHighlightColorD2D(96, SystemAccentColorLight2);
             Border2pxOffset = 1.f * scale;
+            borderColor = GetHighlightColorD2D(255, 102, 206, 255, SystemAccentColorLight2);
             break;
     }
 
@@ -3745,16 +3821,16 @@ BOOL CThemeCache::CacheModuleLocationButton(INT iStateId, INT stateIndex)
             borderColor = MyD2D1Color(96, 112, 112, 112);
             break;
         case 2:
-            fillColor = MyD2D1Color(96, 96, 96, 96);
-            borderColor = MyD2D1Color(96, 144, 144, 144);
+            fillColor = GetHighlightColorD2D(96, SystemAccentColorLight2);
+            borderColor = GetHighlightColorD2D(255, 102, 206, 255, SystemAccentColorLight2);
             break;
         case 3:
-            fillColor = MyD2D1Color(96, 88, 88, 88);
-            borderColor = MyD2D1Color(96, 80, 80, 80);
+            fillColor = GetHighlightColorD2D(64, SystemAccentColorBase);
+            borderColor = GetHighlightColorD2D(255, 102, 206, 255, SystemAccentColorLight2);
             break;
         case 4:
             Border2pxOffset = 1.f * scale;
-            borderColor = MyD2D1Color(255, 255, 255);
+            borderColor = GetHighlightColorD2D(255, 102, 206, 255, SystemAccentColorLight2);
             break;
     }
 
@@ -3812,8 +3888,8 @@ BOOL CThemeCache::CacheModuleSplitButton(INT iPartId, INT iStateId, INT stateInd
         return FALSE;
 
     D2D1_COLOR_F fillColor;
-    if (iStateId == 2) fillColor = MyD2D1Color(96, 144, 144, 144);
-    else if (iStateId == 3 || iStateId == 5) fillColor = MyD2D1Color(64, 144, 144, 144);
+    if (iStateId == 2) fillColor = GetHighlightColorD2D(96, SystemAccentColorLight2);
+    else if (iStateId == 3 || iStateId == 5) fillColor = GetHighlightColorD2D(64, SystemAccentColorBase);
     if (iStateId == 4) {
         y = x += 1.f;
         width = height -= 1;
@@ -3842,7 +3918,7 @@ BOOL CThemeCache::CacheModuleSplitButton(INT iPartId, INT iStateId, INT stateInd
         }
         else if (iStateId == 4)
         {
-            pRenderTarget->CreateSolidColorBrush(MyD2D1Color(255, 255, 255), &brush);
+            pRenderTarget->CreateSolidColorBrush(GetHighlightColorD2D(255, 102, 206, 255, SystemAccentColorLight2), &brush);
             pRenderTarget->DrawGeometry(path.Get(), brush.Get(), 2.f * scale);
         }
     }
@@ -3868,7 +3944,7 @@ BOOL CThemeCache::CacheModuleSplitButton(INT iPartId, INT iStateId, INT stateInd
         }
         else if (iStateId == 4)
         {
-            pRenderTarget->CreateSolidColorBrush(MyD2D1Color(255, 255, 255), &brush);
+            pRenderTarget->CreateSolidColorBrush(GetHighlightColorD2D(255, 102, 206, 255, SystemAccentColorLight2), &brush);
             pRenderTarget->DrawGeometry(path.Get(), brush.Get(), 2.f * scale);
         }
     }
@@ -3915,12 +3991,12 @@ BOOL CThemeCache::CacheNavigationButton(INT iPartId, INT iStateId, INT stateInde
             fillColor = MyD2D1Color(0, 0, 0, 0);
             break;
         case NAV_BB_HOT:
-            fillColor = MyD2D1Color(32, 255, 255, 255);
+            fillColor = GetHighlightColorD2D(64, SystemAccentColorLight2);
             arrowColor = g_IsSysThemeDarkMode ? MyD2D1Color(200, 255, 255, 255) : MyD2D1Color(200, 32, 32, 32);
             break;
         case NAV_BB_PRESSED:
-            fillColor = MyD2D1Color(16, 255, 255, 255);
-            arrowColor = g_IsSysThemeDarkMode ?MyD2D1Color(200, 160, 160, 160) : MyD2D1Color(200, 96, 96, 96);
+            fillColor = GetHighlightColorD2D(48, SystemAccentColorBase);
+            arrowColor = g_IsSysThemeDarkMode ? MyD2D1Color(200, 160, 160, 160) : MyD2D1Color(200, 96, 96, 96);
             break;
         case NAV_BB_DISABLED:
             arrowColor = MyD2D1Color(160, 64, 64, 64);
@@ -4043,8 +4119,8 @@ BOOL CThemeCache::CacheToolbarButton(INT iStateId, INT stateIndex)
     RECT rc = { 0, 0, width, height};
     if (FAILED(CreateBoundD2DRenderTarget(g_themeCache.toolbarbutton[stateIndex], &rc, g_d2dFactory, &pRenderTarget)))
         return FALSE;
-    D2D1_COLOR_F fillColor = (iStateId == TS_HOT || iStateId == TS_OTHERSIDEHOT) ? MyD2D1Color(96, 144, 144, 144) :
-                             (iStateId == TS_PRESSED || iStateId == TS_CHECKED) ? MyD2D1Color(64, 144, 144, 144) : MyD2D1Color(80, 144, 144, 144);
+    D2D1_COLOR_F fillColor = (iStateId == TS_HOT || iStateId == TS_OTHERSIDEHOT) ? GetHighlightColorD2D(96, SystemAccentColorLight2) :
+                             (iStateId == TS_PRESSED || iStateId == TS_CHECKED) ? GetHighlightColorD2D(64, SystemAccentColorBase) : MyD2D1Color(80, 144, 144, 144);
 
     pRenderTarget->BeginDraw();
 
@@ -4056,7 +4132,7 @@ BOOL CThemeCache::CacheToolbarButton(INT iStateId, INT stateIndex)
     if (iStateId == TS_HOTCHECKED || iStateId == TS_CHECKED)
     {
         FLOAT pillOffset = width * 0.2f;
-        D2D1_COLOR_F pillColor = IsAccentColorPossibleD2D(105, 205, 255, SystemAccentColorLight2);
+        D2D1_COLOR_F pillColor = GetHighlightColorD2D(255, 105, 205, 255, SystemAccentColorLight2);
         fillBrush->SetColor(pillColor);
         pRenderTarget->DrawLine(D2D1::Point2F(pillOffset, height-1), D2D1::Point2F(width - pillOffset, height-1), fillBrush.Get(), 2.0f);
     }
@@ -4078,8 +4154,8 @@ BOOL PaintToolbarSplitDropDown(HDC hdc, INT iPartId,  INT iStateId, LPCRECT pRec
     if (FAILED(CreateBoundD2DRenderTarget(hdc, pRect, g_d2dFactory, &pRenderTarget)))
         return FALSE;
 
-    D2D1_COLOR_F fillColor = (iStateId == TS_HOT || iStateId == TS_HOTCHECKED || iStateId == TS_OTHERSIDEHOT) ? MyD2D1Color(96, 144, 144, 144) : 
-                             (iStateId == TS_PRESSED || iStateId == TS_CHECKED) ? MyD2D1Color(64, 144, 144, 144) : MyD2D1Color(0, 0, 0, 0);
+    D2D1_COLOR_F fillColor = (iStateId == TS_HOT || iStateId == TS_HOTCHECKED || iStateId == TS_OTHERSIDEHOT) ? GetHighlightColorD2D(96, SystemAccentColorLight2) : 
+                             (iStateId == TS_PRESSED || iStateId == TS_CHECKED) ? GetHighlightColorD2D(64, SystemAccentColorBase) : MyD2D1Color(0, 0, 0, 0);
 
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
     pRenderTarget->CreateSolidColorBrush(fillColor, &brush);
@@ -4155,7 +4231,7 @@ BOOL CThemeCache::CacheAddressBand(INT iStateId, INT stateIndex)
             break;
         case 4:
             fillColor = g_IsSysThemeDarkMode ? MyD2D1Color(0, 0, 0) : MyD2D1Color(255, 255, 255);
-            borderColor = IsAccentColorPossibleD2D(105, 205, 255, SystemAccentColorLight2);
+            borderColor = GetHighlightColorD2D(255, 105, 205, 255, SystemAccentColorLight2);
             break;
     }
     D2D1_ROUNDED_RECT Rect = D2D1::RoundedRect(D2D1::RectF(0, 0, width, height), cornerRadius, cornerRadius);
@@ -4217,7 +4293,7 @@ BOOL CThemeCache::CacheMenuItem(INT iPartId, INT iStateId, INT indexState)
     
     if (iPartId == MENU_POPUPITEM || iPartId == 27)
     {
-        D2D1_COLOR_F fillColor = IsAccentColorPossibleD2D(0, 160, 255, SystemAccentColorLight1);
+        D2D1_COLOR_F fillColor = GetHighlightColorD2D(255, 0, 120, 215, SystemAccentColorLight1);
         D2D1_ROUNDED_RECT Rect = D2D1::RoundedRect(D2D1::RectF(0, 0, width, height), cornerRadius, cornerRadius);
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> fillBrush;
         pRenderTarget->CreateSolidColorBrush(fillColor, &fillBrush);
@@ -4231,7 +4307,7 @@ BOOL CThemeCache::CacheMenuItem(INT iPartId, INT iStateId, INT indexState)
         pRenderTarget->DrawLine({0, (FLOAT)height/2}, {(FLOAT)width, (FLOAT)height/2}, lineBrush.Get());
     }
     else {
-        D2D1_COLOR_F fillColor = (iStateId == MBI_PUSHED) ? MyD2D1Color(64, 144, 144, 144) : MyD2D1Color(128, 96, 96, 96);
+        D2D1_COLOR_F fillColor = (iStateId == MBI_PUSHED) ? GetHighlightColorD2D(64, SystemAccentColorLight1) : GetHighlightColorD2D(96, SystemAccentColorLight2);
         D2D1_ROUNDED_RECT Rect = D2D1::RoundedRect(D2D1::RectF(0, 0, width, height), cornerRadius, cornerRadius);
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> fillBrush;
         pRenderTarget->CreateSolidColorBrush(fillColor, &fillBrush);
@@ -6194,7 +6270,7 @@ static COLORREF GetCustomSysColor(INT nIndex)
     else if (nIndex == COLOR_APPWORKSPACE)
         return RGB(8, 8, 8);
     else if (nIndex == COLOR_HIGHLIGHT || nIndex == COLOR_MENUHILIGHT)
-        return (g_settings.AccentColorize) ? g_settings.AccentColor : RGB(0, 120, 215);
+        return GetThemeHighlightColor();
     else if (nIndex == COLOR_BTNFACE)
         return RGB(1, 1, 1);
     else if (nIndex == COLOR_GRAYTEXT)
@@ -6492,9 +6568,20 @@ VOID LoadSettings()
         return;
     }
 
+    auto strHighlight = WindhawkUtils::StringSetting(Wh_GetStringSetting(L"RenderingMod.HighlightColor"));
+    if (0 == wcscmp(strHighlight, L"hardcoded"))
+        g_settings.HighlightColorType = Settings::Highlight_Hardcoded;
+    else if (0 == wcscmp(strHighlight, L"accent"))
+        g_settings.HighlightColorType = Settings::Highlight_Accent;
+    else
+        g_settings.HighlightColorType = Settings::Highlight_WindowsBlue;
+
     g_settings.AccentColorize = Wh_GetIntSetting(L"RenderingMod.AccentColorControls");
-    if (g_settings.AccentColorize)
-       g_settings.AccentColorize = GetAccentColor(g_settings.AccentColor);
+    if (g_settings.AccentColorize || g_settings.HighlightColorType == Settings::Highlight_Accent)
+    {
+        GetAccentColor(g_settings.AccentColor);
+        g_AccentPalette.LoadAccentPalette();
+    }
 
     g_settings.FillBg = Wh_GetIntSetting(L"RenderingMod.ThemeBackground");
     g_settings.ClearTypeText = Wh_GetIntSetting(L"RenderingMod.ClearTypeText");
