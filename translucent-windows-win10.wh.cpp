@@ -2,7 +2,7 @@
 // @id              translucent-windows-win10
 // @name            Translucent Windows
 // @description     Enables native translucent effects in Windows 10
-// @version         1.0.0
+// @version         1.1.0
 // @author          Gameknight963 🐠
 // @github          https://github.com/Gameknight963
 // @include         *
@@ -1773,7 +1773,7 @@ BOOL CThemeCache::CacheScrollbar(INT iPartId, INT iStateId, INT stateIndex)
     INT width = 17 * scale, height = 11 * scale;
     if (iPartId == SBP_THUMBBTNHORZ)
         width = 20 * scale, height = 17 * scale;
-    FLOAT cornerRadius = 4.f * scale;
+    FLOAT cornerRadius = 0.f;
 
     if (!g_themeCache.CreateDIB(g_themeCache.scrollbar[stateIndex], width, height))
         return FALSE;
@@ -1925,7 +1925,7 @@ BOOL CThemeCache::CachePushButton(INT iStateId, INT stateIndex)
 {
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
     INT width = 18, height = 18;
-    FLOAT cornerRadius = 3.f * scale;
+    FLOAT cornerRadius = 0.f;
 
     if (!g_themeCache.CreateDIB(g_themeCache.pushbutton[stateIndex], width, height))
         return FALSE;
@@ -2075,7 +2075,7 @@ BOOL CThemeCache::CacheCheckButton(LPCRECT pRect, INT iStateId, INT stateIndex)
 {
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
     FLOAT width = RECTWIDTH(pRect), height = RECTHEIGHT(pRect);
-    FLOAT cornerRadius = 3.f * scale;
+    FLOAT cornerRadius = 0.f;
 
     if (!g_themeCache.CreateDIB(g_themeCache.checkbutton[stateIndex], width, height))
         return FALSE;
@@ -2184,7 +2184,6 @@ BOOL PaintGroupBox(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect, LPCRECT pC
     if (FAILED(CreateBoundD2DRenderTarget(hdc, pRect, g_d2dFactory, &pRenderTarget)))
         return FALSE;
 
-    const FLOAT radius = 4.0f;
     const FLOAT x = 0.5f;
     const FLOAT y = 0.5f;
     const FLOAT width = static_cast<FLOAT>RECTWIDTH(pRect) - 0.5f;
@@ -2202,25 +2201,21 @@ BOOL PaintGroupBox(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect, LPCRECT pC
     
     if (!pClippedRect) // Top line if label does clip it
     {
-        sink->BeginFigure(D2D1::Point2F(radius, y), D2D1_FIGURE_BEGIN_HOLLOW);
-        sink->AddLine(D2D1::Point2F(width - radius, y));
+        sink->BeginFigure(D2D1::Point2F(x, y), D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(D2D1::Point2F(width, y));
     }
     else
-        sink->BeginFigure(D2D1::Point2F(width - radius, y), D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->BeginFigure(D2D1::Point2F(width, y), D2D1_FIGURE_BEGIN_HOLLOW);
 
-    sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(width, radius), D2D1::SizeF(radius, radius), 0, D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
-    sink->AddLine(D2D1::Point2F(width, h - radius));
-    sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(width - radius, h), D2D1::SizeF(radius, radius), 0, D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
-    sink->AddLine(D2D1::Point2F(radius, h));
-    sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(x, h - radius), D2D1::SizeF(radius, radius), 0, D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
-    sink->AddLine(D2D1::Point2F(x, radius));
-    sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(radius + 1.f, y), D2D1::SizeF(radius, radius), 0, D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
+    sink->AddLine(D2D1::Point2F(width, h));
+    sink->AddLine(D2D1::Point2F(x, h));
+    sink->AddLine(D2D1::Point2F(x, y));
     sink->EndFigure(D2D1_FIGURE_END_OPEN);
     if (pClippedRect && (FLOAT)(pClippedRect->top) == (FLOAT)pRect->top) 
     {
         // Clipped rect sides
-        const FLOAT cx = static_cast<FLOAT>(pClippedRect->left) + radius - .5f;
-        const FLOAT cx2 = static_cast<FLOAT>(pClippedRect->right) - radius;
+        const FLOAT cx = static_cast<FLOAT>(pClippedRect->left) - .5f;
+        const FLOAT cx2 = static_cast<FLOAT>(pClippedRect->right);
         // Top line right side of the label
         pRenderTarget->DrawLine(
             D2D1::Point2F(cx, .5f),
@@ -2255,7 +2250,7 @@ BOOL CThemeCache::CacheCommandlinkButton(INT iStateId, INT stateIndex)
 {
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
     INT width = 18, height = 18;
-    FLOAT cornerRadius = 4.f * scale;
+    FLOAT cornerRadius = 0.f;
 
     if (!g_themeCache.CreateDIB(g_themeCache.commandlinkbutton[stateIndex], width, height))
         return FALSE;
@@ -2285,7 +2280,7 @@ BOOL CThemeCache::CacheCommandlinkButton(INT iStateId, INT stateIndex)
             break;
         case CMDLS_DEFAULTED:
         case CMDLS_DEFAULTED_ANIMATING:
-            roundedRect = {D2D1::RectF(1.f * scale, 1.f * scale, width - 1.f * scale, height - 1.f * scale), cornerRadius - 1.f, cornerRadius - 1.f};
+            roundedRect = {D2D1::RectF(1.f * scale, 1.f * scale, width - 1.f * scale, height - 1.f * scale), 0.f, 0.f};
             pRenderTarget->CreateSolidColorBrush(MyD2D1Color(255, 255, 255), &brush);
             pRenderTarget->DrawRoundedRectangle(&roundedRect, brush.Get(), 2.f * scale);
             break;
@@ -2394,7 +2389,7 @@ BOOL PaintCombobox(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 BOOL CThemeCache::CacheCombobox(INT iPartId, INT iStateId, INT stateIndex)
 {
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 3.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT width = 18, height = 18;
 
     if (!g_themeCache.CreateDIB(g_themeCache.combobox[stateIndex], width, height))
@@ -2493,7 +2488,7 @@ BOOL PaintEditBox(HTHEME hTheme, HDC hdc, INT iPartId, INT iStateId, LPCRECT pRe
 BOOL CThemeCache::CacheEditBox(INT iPartId, INT iStateId, INT stateIndex)
 {
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 3.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT x = 0, y = 0;
     INT width = 18, height = 18;
     if(!g_themeCache.CreateDIB(g_themeCache.editbox[stateIndex], width, height))
@@ -2663,7 +2658,7 @@ BOOL PaintTab(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 BOOL CThemeCache::CacheTab(INT iStateId, INT stateIndex)
 {
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 4.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT width = 18, height = 18;
 
     if(!g_themeCache.CreateDIB(g_themeCache.tab[stateIndex], width, height))
@@ -2700,7 +2695,7 @@ BOOL CThemeCache::CacheTab(INT iStateId, INT stateIndex)
         FLOAT pillRight  = width - widthPadding;
         FLOAT pillBottom = height - verticalOffset;
         FLOAT pillTop    = pillBottom - desiredHeight;
-        FLOAT pillRadius = 1.f + round(scale);
+        FLOAT pillRadius = 0.f;
 
         D2D1_ROUNDED_RECT pillRect = D2D1::RoundedRect(D2D1::RectF(pillLeft, pillTop, pillRight, pillBottom),pillRadius, pillRadius);
 
@@ -2740,7 +2735,7 @@ BOOL CThemeCache::CacheTrackBar(INT iPartId, INT stateIndex)
         return FALSE;
     
     pRenderTarget->BeginDraw();
-    D2D1_ROUNDED_RECT body = D2D1::RoundedRect(D2D1::RectF(0, 0, width, height), 2.f, 2.f);
+    D2D1_ROUNDED_RECT body = D2D1::RoundedRect(D2D1::RectF(0, 0, width, height), 0.f, 0.f);
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
     pRenderTarget->CreateSolidColorBrush(MyD2D1Color(96, 96, 96), &brush);
     pRenderTarget->FillRoundedRectangle(&body, brush.Get());
@@ -2768,7 +2763,7 @@ BOOL PaintTrackbarThumb(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 BOOL CThemeCache::CacheTrackBarThumb(INT iPartId, INT iStateId, INT stateIndex)
 {
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 3.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT width = 10 * scale, height = 21 * scale;
 
     if (iPartId == TKP_THUMBVERT)
@@ -2845,7 +2840,7 @@ BOOL CThemeCache::CacheTrackBarPointedThumb(INT iPartId, INT iStateId, INT state
     {
         FLOAT tipHeight = height * 0.3f;
         FLOAT bodyHeight = height - tipHeight;
-        FLOAT bodyRadius = 2.f * scale;
+        FLOAT bodyRadius = 0.f;
 
         D2D1_ROUNDED_RECT body = D2D1::RoundedRect(D2D1::RectF(0, 0, width, bodyHeight), bodyRadius, bodyRadius);
         pRenderTarget->FillRoundedRectangle(body, brush.Get());
@@ -2867,7 +2862,7 @@ BOOL CThemeCache::CacheTrackBarPointedThumb(INT iPartId, INT iStateId, INT state
     {
         FLOAT tipHeight = height * 0.3f;
         FLOAT bodyY = tipHeight;
-        FLOAT bodyRadius = 2.f * scale;
+        FLOAT bodyRadius = 0.f;
 
         D2D1_ROUNDED_RECT body = D2D1::RoundedRect(D2D1::RectF(0, bodyY, width, height), bodyRadius, bodyRadius);
         pRenderTarget->FillRoundedRectangle(body, brush.Get());
@@ -2889,7 +2884,7 @@ BOOL CThemeCache::CacheTrackBarPointedThumb(INT iPartId, INT iStateId, INT state
     else if (iPartId == TKP_THUMBLEFT)
     {
         FLOAT tipWidth = width * 0.3f;
-        FLOAT bodyRadius = 2.f * scale;
+        FLOAT bodyRadius = 0.f;
 
         D2D1_ROUNDED_RECT body = D2D1::RoundedRect(D2D1::RectF(tipWidth, 0, width, height), bodyRadius, bodyRadius);
         pRenderTarget->FillRoundedRectangle(body, brush.Get());
@@ -2912,7 +2907,7 @@ BOOL CThemeCache::CacheTrackBarPointedThumb(INT iPartId, INT iStateId, INT state
     {
         FLOAT tipWidth = width * 0.3f;
         FLOAT bodyWidth = width - tipWidth;
-        FLOAT bodyRadius = 2.f * scale;
+        FLOAT bodyRadius = 0.f;
 
         D2D1_ROUNDED_RECT body = D2D1::RoundedRect(D2D1::RectF(0, 0, bodyWidth, height), bodyRadius, bodyRadius);
         pRenderTarget->FillRoundedRectangle(body, brush.Get());
@@ -2960,8 +2955,7 @@ BOOL PaintProgressBar(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 
 BOOL CThemeCache::CacheProgressBar(INT iPartId, INT iStateId, INT stateIndex)
 {
-    FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 3.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT x = 0, y = 0;
     INT width = 18, height = 18;
 
@@ -3088,8 +3082,7 @@ BOOL PaintIndeterminateProgressBar(HDC hdc, INT iPartId, INT iStateId, LPCRECT p
 
 BOOL CThemeCache::CacheIndeterminateBar(INT iPartId, INT stateIndex)
 {
-    FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 3.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT width = 12, height = 12;
 
     if (iPartId == PP_MOVEOVERLAYVERT)
@@ -3158,7 +3151,7 @@ BOOL CThemeCache::CacheListItem(INT iPartId, INT iStateId, INT stateIndex)
         return FALSE;
     
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 4.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT x = 0, y = 0;
     INT width = 18, height = 18;
 
@@ -3217,7 +3210,7 @@ BOOL CThemeCache::CacheListItem(INT iPartId, INT iStateId, INT stateIndex)
         {
             x = y = 1.f;
             width = height -= 1.f;
-            rounded = D2D1::RoundedRect(D2D1::RectF(x, y, width , height), cornerRadius - 1.f, cornerRadius - 1.f);
+            rounded = D2D1::RoundedRect(D2D1::RectF(x, y, width , height), 0.f, 0.f);
             brush->SetColor(borderColor);
             pRenderTarget->DrawRoundedRectangle(&rounded, brush.Get(), 2.f * scale);
         }
@@ -3233,7 +3226,7 @@ BOOL CThemeCache::CacheListGroupHeader(INT iPartId, INT iStateId, INT stateIndex
         return FALSE;
 
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 4.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT x = 0, y = 0;
     INT width = (iPartId == LVP_COLUMNDETAIL) ? 2 : 18, height = (iPartId == LVP_COLUMNDETAIL) ? 1 : 18;
 
@@ -3298,7 +3291,7 @@ BOOL CThemeCache::CacheListGroupHeader(INT iPartId, INT iStateId, INT stateIndex
         {
             x = y = 1.f;
             width = height -= 1.f;
-            rounded = D2D1::RoundedRect(D2D1::RectF(x, y, width , height), cornerRadius - 1.f, cornerRadius - 1.f);
+            rounded = D2D1::RoundedRect(D2D1::RectF(x, y, width , height), 0.f, 0.f);
             pRenderTarget->CreateSolidColorBrush(borderColor, &brush);
             pRenderTarget->DrawRoundedRectangle(&rounded, brush.Get(), 2.f * scale);
         }
@@ -3335,7 +3328,7 @@ BOOL PaintTreeViewButton(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 BOOL CThemeCache::CacheTreeViewButton(INT iPartId, INT iStateId, INT stateIndex)
 {
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 5.f * scale;
+    FLOAT cornerRadius = 0.f;
     FLOAT x = 0, y = 0;
     INT width = 18, height = 18;
 
@@ -3369,7 +3362,7 @@ BOOL CThemeCache::CacheTreeViewButton(INT iPartId, INT iStateId, INT stateIndex)
 
         if (iStateId == TREIS_SELECTED || iStateId == TREIS_SELECTEDNOTFOCUS || iStateId == TREIS_HOTSELECTED)
         {
-            FLOAT pillOffsetY = 7, pillWidth = 2.f + round(scale), pillRadius = 1.f + round(scale);
+            FLOAT pillOffsetY = 7, pillWidth = 2.f + round(scale), pillRadius = 0.f;
             brush->SetColor(IsAccentColorPossibleD2D(102, 206, 255, SystemAccentColorLight2));
             pRenderTarget->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y + pillOffsetY, x + pillWidth, height - pillOffsetY), pillRadius, pillRadius),brush.Get());
         }
@@ -3491,7 +3484,7 @@ BOOL PaintItemsView(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 BOOL CThemeCache::CacheItemsView(INT iPartId, INT iStateId, INT stateIndex)
 {
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 4.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT x = 0, y = 0;
     INT width = 18, height = 18;
 
@@ -3531,7 +3524,7 @@ BOOL CThemeCache::CacheItemsView(INT iPartId, INT iStateId, INT stateIndex)
     {
         if (iStateId == 1)
         {
-            FLOAT radius = (iPartId == 6) ? 2.f * scale : 3.f * scale;
+            FLOAT radius = 0.f;
             D2D1_ROUNDED_RECT rect = D2D1::RoundedRect(D2D1::RectF(x, y, width, height), radius, radius);
             Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> borderBrush;
             pRenderTarget->CreateSolidColorBrush(MyD2D1Color(255, 255, 255), &borderBrush);
@@ -3568,8 +3561,6 @@ BOOL PaintHeader(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 
 BOOL CThemeCache::CacheHeader(INT iStateId, INT stateIndex)
 {
-    FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 6.f * scale;
     INT x = 0, y = 0;
     INT width = 24, height = 24;
 
@@ -3596,28 +3587,11 @@ BOOL CThemeCache::CacheHeader(INT iStateId, INT stateIndex)
         case HIS_ICONNORMAL: case HIS_ICONSORTEDNORMAL:
             return TRUE;
     }
-    Microsoft::WRL::ComPtr<ID2D1PathGeometry> geometry;
-    Microsoft::WRL::ComPtr<ID2D1GeometrySink> sink;
+    D2D1_RECT_F rect = D2D1::RectF(x, y, width, height);
     pRenderTarget->BeginDraw();
-
-    g_d2dFactory->CreatePathGeometry(&geometry);
-    geometry->Open(&sink);
-    sink->BeginFigure(D2D1::Point2F(x, y), D2D1_FIGURE_BEGIN_FILLED);
-    sink->AddLine(D2D1::Point2F(width, y));
-    sink->AddLine(D2D1::Point2F(width, height - cornerRadius));
-    sink->AddArc(D2D1::ArcSegment(
-        D2D1::Point2F(width - cornerRadius, height),
-        D2D1::SizeF(cornerRadius, cornerRadius), 0.0f, D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
-    sink->AddLine(D2D1::Point2F(cornerRadius, height));
-    sink->AddArc(D2D1::ArcSegment(
-        D2D1::Point2F(x, height - cornerRadius),
-        D2D1::SizeF(cornerRadius, cornerRadius), 0.0f, D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
-    sink->AddLine(D2D1::Point2F(x, y));
-    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-    sink->Close();
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
     pRenderTarget->CreateSolidColorBrush(fillColor, &brush);
-    pRenderTarget->FillGeometry(geometry.Get(), brush.Get());
+    pRenderTarget->FillRectangle(&rect, brush.Get());
 
     auto hr = pRenderTarget->EndDraw();
     if (FAILED(hr)) {Wh_Log(L"Failed D2D drawing [ERROR]: 0x%08X\n", hr); return FALSE;}
@@ -3679,7 +3653,7 @@ BOOL PaintModuleButton(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 BOOL CThemeCache::CacheModuleButton(INT iStateId, INT stateIndex)
 {
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 4.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT x = 0, y = 0;
     INT width = 18, height = 18;
 
@@ -3750,7 +3724,7 @@ BOOL PaintModuleLocation(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 BOOL CThemeCache::CacheModuleLocationButton(INT iStateId, INT stateIndex)
 {
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 4.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT x = 0, y = 0;
     INT width = 18, height = 18;
     if(!g_themeCache.CreateDIB(g_themeCache.modulelocationbutton[stateIndex], width, height))
@@ -3826,7 +3800,6 @@ BOOL PaintModuleSplitButton(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 BOOL CThemeCache::CacheModuleSplitButton(INT iPartId, INT iStateId, INT stateIndex)
 {
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 4.f * scale;
     INT x = 0, y = 0;
     INT width = 18, height = 18;
 
@@ -3855,18 +3828,8 @@ BOOL CThemeCache::CacheModuleSplitButton(INT iPartId, INT iStateId, INT stateInd
         path->Open(&sink);
 
         sink->BeginFigure(D2D1::Point2F(width, y), D2D1_FIGURE_BEGIN_FILLED);
-        sink->AddLine(D2D1::Point2F(x + cornerRadius, y));
-        sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(x, cornerRadius + y), D2D1::SizeF(cornerRadius, cornerRadius),
-            0.f,
-            D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE,
-            D2D1_ARC_SIZE_SMALL
-        ));
-        sink->AddLine(D2D1::Point2F(x, height - cornerRadius));
-        sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(x + cornerRadius, height), D2D1::SizeF(cornerRadius, cornerRadius),
-            0.f,
-            D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE,
-            D2D1_ARC_SIZE_SMALL
-        ));
+        sink->AddLine(D2D1::Point2F(x, y));
+        sink->AddLine(D2D1::Point2F(x, height));
         sink->AddLine(D2D1::Point2F(width, height));
         sink->EndFigure(D2D1_FIGURE_END_OPEN);
         sink->Close();
@@ -3891,18 +3854,8 @@ BOOL CThemeCache::CacheModuleSplitButton(INT iPartId, INT iStateId, INT stateInd
         path->Open(&sink);
 
         sink->BeginFigure(D2D1::Point2F(x, y), D2D1_FIGURE_BEGIN_FILLED);
-        sink->AddLine(D2D1::Point2F(width - cornerRadius, y));
-        sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(width, y + cornerRadius), D2D1::SizeF(cornerRadius, cornerRadius),
-            0.f,
-            D2D1_SWEEP_DIRECTION_CLOCKWISE,
-            D2D1_ARC_SIZE_SMALL
-        ));
-        sink->AddLine(D2D1::Point2F(width, height - cornerRadius));
-        sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(width - cornerRadius, height), D2D1::SizeF(cornerRadius, cornerRadius),
-            0.f,
-            D2D1_SWEEP_DIRECTION_CLOCKWISE,
-            D2D1_ARC_SIZE_SMALL
-        ));
+        sink->AddLine(D2D1::Point2F(width, y));
+        sink->AddLine(D2D1::Point2F(width, height));
         sink->AddLine(D2D1::Point2F(x, height));
         sink->EndFigure(D2D1_FIGURE_END_OPEN);
         sink->Close();
@@ -3940,7 +3893,7 @@ BOOL PaintNavigationButton(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 BOOL CThemeCache::CacheNavigationButton(INT iPartId, INT iStateId, INT stateIndex)
 {
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 4.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT x = 0, y = 0;
     INT width = 30 * scale, height = 30 * scale;
     
@@ -4080,8 +4033,7 @@ BOOL PaintToolbarButton(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 
 BOOL CThemeCache::CacheToolbarButton(INT iStateId, INT stateIndex)
 {
-    FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 4.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT width = 18, height = 18;
 
     if (!g_themeCache.CreateDIB(g_themeCache.toolbarbutton[stateIndex], width, height))
@@ -4119,7 +4071,7 @@ BOOL PaintToolbarSplitDropDown(HDC hdc, INT iPartId,  INT iStateId, LPCRECT pRec
         return FALSE;
     
     FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 4.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT width = RECTWIDTH(pRect), height = RECTHEIGHT(pRect);
 
     Microsoft::WRL::ComPtr<ID2D1DCRenderTarget> pRenderTarget;
@@ -4176,8 +4128,7 @@ BOOL PaintAddressBand(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 
 BOOL CThemeCache::CacheAddressBand(INT iStateId, INT stateIndex)
 {
-    FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 5.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT width = 24, height = 24;
 
     if (!g_themeCache.CreateDIB(g_themeCache.addressband[stateIndex], width, height))
@@ -4215,8 +4166,8 @@ BOOL CThemeCache::CacheAddressBand(INT iStateId, INT stateIndex)
 
     pRenderTarget->FillRoundedRectangle(&Rect, fillBrush.Get());
     fillBrush->SetColor(borderColor);
-    pRenderTarget->DrawLine(D2D1::Point2F(cornerRadius/2, height-.5f), D2D1::Point2F(width-cornerRadius/2, height-.5f), fillBrush.Get());
-    pRenderTarget->DrawLine(D2D1::Point2F(cornerRadius/2 - 1.5f, height-1.5f), D2D1::Point2F(width - cornerRadius/2 + 1.5f, height-1.5f), fillBrush.Get());
+    pRenderTarget->DrawLine(D2D1::Point2F(0.f, height-.5f), D2D1::Point2F((FLOAT)width, height-.5f), fillBrush.Get());
+    pRenderTarget->DrawLine(D2D1::Point2F(0.f, height-1.5f), D2D1::Point2F((FLOAT)width, height-1.5f), fillBrush.Get());
 
     auto hr = pRenderTarget->EndDraw();
     if (FAILED(hr)) {Wh_Log(L"Failed D2D drawing [ERROR]: 0x%08X\n", hr); return FALSE;}
@@ -4246,8 +4197,7 @@ BOOL PaintMenu(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 
 BOOL CThemeCache::CacheMenuItem(INT iPartId, INT iStateId, INT indexState)
 {
-    FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
-    FLOAT cornerRadius = 4.f * scale;
+    FLOAT cornerRadius = 0.f;
     INT width = 18, height = 18;
 
     if (iPartId == MENU_POPUPSEPARATOR) {
@@ -4306,9 +4256,8 @@ BOOL PaintDragDrop(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 
 BOOL CThemeCache::CacheDragDrop()
 {
-    FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
     INT width = 108, height = 108;
-    FLOAT cornerRadius = 4.f * scale;
+    FLOAT cornerRadius = 0.f;
 
     if (!g_themeCache.CreateDIB(g_themeCache.dragdrop[0], width, height))
         return FALSE;
@@ -4423,9 +4372,8 @@ BOOL PaintSpin(HDC hdc, INT iPartId, INT iStateId, LPCRECT pRect)
 
 BOOL CThemeCache::CacheSpinButton(INT iPartId, INT iStateId, INT stateIndex)
 {
-    FLOAT scale = (FLOAT)g_Dpi / USER_DEFAULT_SCREEN_DPI;
     INT width = 12, height = 12;
-    FLOAT cornerRadius = 2.f * scale;
+    FLOAT cornerRadius = 0.f;
 
     if (!g_themeCache.CreateDIB(g_themeCache.spin[stateIndex], width, height))
         return FALSE;
