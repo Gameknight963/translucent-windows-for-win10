@@ -18,8 +18,7 @@ Shown with OpenGlass + aero10.1
 6. **Configurable Text Weight / Gamma** Added the `TextGamma` setting (1.0 to 5.0, default 1.4) to allow fine-tuning of font boldness and contrast
 7. **Configurable Dark Mode Titlebars**: Added the `DarkModeTitlebars` setting to toggle immersive dark titlebars, with support across all Windows 10 builds (falls back to attribute 19 on builds 1809–1909). Previously this was forced on
 8. **Immersive Menu Fix** Fixed immersive context menu fonts being 1pt too large by not overridding `pFont->lfHeight`
-9. **Optional shadow text** Uses Windows' native shadow text renderer for supported text. Disabled by default; ClearType remains available.
-10. **Upstream fixes** Backported the relevant text, Explorer, accent color, and painting fixes from Translucent Windows 1.8.1 and 1.8.2. The Windows 10 control styling is preserved.
+9. **Optional shadow text** Can now enable shadow text, which can help make ClearType more readable.
 
 ## Installation
 
