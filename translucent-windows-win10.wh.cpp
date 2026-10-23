@@ -915,7 +915,7 @@ struct BPGuard {
 };
 thread_local BPGuard tl_bpGuard;
 thread_local bool tl_nativeShadowText = false;
-using DrawShadowTextEx_t = INT(STDCALL*)(HDC, LPCWSTR, INT, LPRECT, UINT,
+using DrawShadowTextEx_t = INT(__fastcall*)(HDC, LPCWSTR, INT, LPRECT, UINT,
     COLORREF, COLORREF, INT, INT, BYTE, BOOL);
 DrawShadowTextEx_t DrawShadowTextEx_orig = nullptr;
 decltype(&DrawShadowText) DrawShadowText_func = nullptr;
@@ -5850,7 +5850,7 @@ VOID User32Hooks(BOOL areSysColorsApplied)
     }
 }
 
-int STDCALL HookedDrawShadowTextEx(HDC hdc, LPCWSTR text, INT count, LPRECT rect, UINT format,
+int __fastcall HookedDrawShadowTextEx(HDC hdc, LPCWSTR text, INT count, LPRECT rect, UINT format,
     COLORREF textColor, COLORREF shadowColor, INT xOffset, INT yOffset, BYTE alpha, BOOL initBuffer)
 {
     NativeShadowGuard guard;
