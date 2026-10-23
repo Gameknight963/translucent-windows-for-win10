@@ -109,6 +109,11 @@ This is caused by default by the AccentBlur API.❕
       $name: 🔷 Subpixel ClearType text
       $description: >-
        Preserves subpixel ClearType antialiasing on translucent windows instead of converting to grayscale.
+    - ShadowText: FALSE
+      $name: 🔷 Shadow text
+      $description: >-
+       Uses native Windows shadow text rendering where supported. Disabled by default.
+       Other text keeps the ClearType setting.
     - TextGamma: 14
       $name: 🔷 Text weight / thickness
       $description: >-
@@ -329,6 +334,7 @@ struct Settings{
     COLORREF AccentColor = 0xFFFFFFFF;
     BOOL TextAlphaBlend = FALSE;
     BOOL ClearTypeText = FALSE;
+    BOOL ShadowText = FALSE;
     INT TextGamma = 14;
     BOOL SetSystemColors = FALSE;
     BOOL DarkModeTitlebars = TRUE;
@@ -446,6 +452,7 @@ NtUserCreateWindowEx_t NtUserCreateWindowEx_Original;
 static decltype(&DwmExtendFrameIntoClientArea) DwmExtendFrameIntoClientArea_orig = nullptr;
 
 static decltype(&DrawTextW) DrawTextW_orig = nullptr;
+static decltype(&DrawTextExW) DrawTextExW_orig = nullptr;
 static decltype(&ExtTextOutW) ExtTextOutW_orig = nullptr;
 static decltype(&DrawThemeText) DrawThemeText_orig = nullptr;
 static decltype(&DrawThemeTextEx) DrawThemeTextEx_orig = nullptr;
@@ -907,6 +914,36 @@ struct BPGuard {
     ~BPGuard() { BufferedPaintUnInit(); }
 };
 thread_local BPGuard tl_bpGuard;
+thread_local bool tl_nativeShadowText = false;
+using DrawShadowTextEx_t = INT(STDCALL*)(HDC, LPCWSTR, INT, LPRECT, UINT,
+    COLORREF, COLORREF, INT, INT, BYTE, BOOL);
+DrawShadowTextEx_t DrawShadowTextEx_orig = nullptr;
+
+struct NativeShadowGuard {
+    bool previous = tl_nativeShadowText;
+    NativeShadowGuard() { tl_nativeShadowText = true; }
+    ~NativeShadowGuard() { tl_nativeShadowText = previous; }
+};
+
+INT TryDrawShadowText(HDC hdc, LPCWSTR text, INT count, LPRECT rect, UINT flags, COLORREF color)
+{
+    if (!g_settings.ShadowText || tl_nativeShadowText || !DrawShadowTextEx_orig || !text || !count || !rect ||
+        (flags & (DT_CALCRECT | DT_MODIFYSTRING)))
+        return 0;
+    (void)tl_bpGuard;
+    INT saved = SaveDC(hdc);
+    if (!saved)
+        return 0;
+    NativeShadowGuard guard;
+    SetTextAlign(hdc, TA_LEFT | TA_TOP);
+    SetBkMode(hdc, TRANSPARENT);
+    COLORREF shadow = GetRValue(color) * 299 + GetGValue(color) * 587 + GetBValue(color) * 114 < 128000
+        ? RGB(255, 255, 255) : RGB(0, 0, 0);
+    INT offset = std::max(1, MulDiv(GetDeviceCaps(hdc, LOGPIXELSY), 1, 96));
+    INT result = DrawShadowTextEx_orig(hdc, text, count, rect, flags, color, shadow, offset, offset, 160, TRUE);
+    RestoreDC(hdc, saved);
+    return result;
+}
 
 // Text rendering fixes from Translucent Windows 1.8.1 and 1.8.2.
 BOOL ExtTextOutBkPaint(HDC hdc, LPCRECT lprect, UINT options)
@@ -1078,7 +1115,7 @@ BOOL WINAPI HookedExtTextOutW(
     UINT c,
     const INT* lpDx)
 {
-    if (ExtTextOutShouldSkip(hdc, options, lprect, lpString, c))
+    if (tl_nativeShadowText || ExtTextOutShouldSkip(hdc, options, lprect, lpString, c))
         return ExtTextOutW_orig(hdc, x, y, options, lprect, lpString, c, lpDx);
 
     (void)tl_bpGuard;
@@ -1128,6 +1165,11 @@ HRESULT WINAPI HookedDrawTextWithGlow(HDC hdcMem, LPWSTR pszText, UINT cch, RECT
                                       COLORREF crGlow, UINT nGlowRadius, UINT nGlowIntensity, BOOL fPreMultiply,
                                       DTT_CALLBACK_PROC pfnDrawTextCallback, LPARAM lParam)
 {
+    if (tl_nativeShadowText)
+        return DrawTextWithGlow(hdcMem, pszText, cch, pRect, dwFlags, crText, crGlow, nGlowRadius, nGlowIntensity, fPreMultiply, pfnDrawTextCallback, lParam);
+    if (!pfnDrawTextCallback && nGlowRadius == 0 &&
+        TryDrawShadowText(hdcMem, pszText, cch, pRect, dwFlags, crText))
+        return S_OK;
     if (pRect->right == pRect->left || pRect->bottom == pRect->top) { 
         if ((dwFlags & DT_CALCRECT) == 0)
             return DrawTextWithGlow(hdcMem, pszText, cch, pRect, dwFlags, crText, crGlow, nGlowRadius, nGlowIntensity, fPreMultiply, pfnDrawTextCallback, lParam);
@@ -1151,7 +1193,9 @@ HRESULT WINAPI HookedDrawTextWithGlow(HDC hdcMem, LPWSTR pszText, UINT cch, RECT
 }
 
 INT WINAPI HookedDrawTextW(HDC hdc, LPCWSTR lpchText, INT cchText, LPRECT lprc, UINT format)
-{   
+{
+    if (tl_nativeShadowText)
+        return DrawTextW_orig(hdc, lpchText, cchText, lprc, format);
     // Windows 11 context menus use Fluent icons as glyphs
     // Handled internally in the shell32 routine s_DrawGlyph()
     auto ContextMenuGlyphs = [&hdc, &lpchText]() {
@@ -1170,14 +1214,22 @@ INT WINAPI HookedDrawTextW(HDC hdc, LPCWSTR lpchText, INT cchText, LPRECT lprc, 
         ContextMenuGlyphs();
 
     // Modify and convert hardcoded Syslink black text color into white (e.g. inside "Sharing" win32 Properties tab)
-    if (!g_IsSysThemeDarkMode || (GetTextColor(hdc) & 0x00FFFFFF) != RGB(0, 0, 0))
-        return DrawTextW_orig(hdc, lpchText, cchText, lprc, format);
-    
-    HWND hWnd = WindowFromDC(hdc);
-    if (GetWindowClass(hWnd) == L"SysLink")
+    if (g_IsSysThemeDarkMode && (GetTextColor(hdc) & 0x00FFFFFF) == RGB(0, 0, 0) &&
+        GetWindowClass(WindowFromDC(hdc)) == L"SysLink")
         SetTextColor(hdc, RGB(255, 255, 255));
 
+    if (INT result = TryDrawShadowText(hdc, lpchText, cchText, lprc, format, GetTextColor(hdc)))
+        return result;
     return DrawTextW_orig(hdc, lpchText, cchText, lprc, format);
+}
+
+INT WINAPI HookedDrawTextExW(HDC hdc, LPWSTR text, INT count, LPRECT rect, UINT flags, LPDRAWTEXTPARAMS params)
+{
+    if (!params) {
+        if (INT result = TryDrawShadowText(hdc, text, count, rect, flags, GetTextColor(hdc)))
+            return result;
+    }
+    return DrawTextExW_orig(hdc, text, count, rect, flags, params);
 }
 
 HRESULT WINAPI HookedDrawThemeTextEx(HTHEME hTheme, HDC hdc, INT iPartId, INT iStateId, LPCWSTR pszText,
@@ -5797,10 +5849,10 @@ VOID User32Hooks(BOOL areSysColorsApplied)
     }
 }
 
-int (STDCALL *DrawShadowTextEx_orig)(HDC, LPCWSTR, INT, LPRECT, UINT, COLORREF, COLORREF, INT, INT, BYTE, BOOL);
 int STDCALL HookedDrawShadowTextEx(HDC hdc, LPCWSTR text, INT count, LPRECT rect, UINT format,
     COLORREF textColor, COLORREF shadowColor, INT xOffset, INT yOffset, BYTE alpha, BOOL initBuffer)
 {
+    NativeShadowGuard guard;
     if (!g_IsSysThemeDarkMode && g_InsideExplorerProc) {
         textColor = RGB(0, 0, 0);
         shadowColor = RGB(255, 255, 255);
@@ -6492,6 +6544,7 @@ VOID CustomRenderingHooks()
     }
     WindhawkUtils::SetFunctionHook(DrawTextWithGlow, HookedDrawTextWithGlow, &DrawTextWithGlow);
     WindhawkUtils::SetFunctionHook(DrawTextW, HookedDrawTextW, &DrawTextW_orig);
+    WindhawkUtils::SetFunctionHook(DrawTextExW, HookedDrawTextExW, &DrawTextExW_orig);
     WindhawkUtils::SetFunctionHook(ExtTextOutW, HookedExtTextOutW, &ExtTextOutW_orig);
     WindhawkUtils::SetFunctionHook(DrawThemeText, HookedDrawThemeText, &DrawThemeText_orig);
     WindhawkUtils::SetFunctionHook(DrawThemeTextEx, HookedDrawThemeTextEx, &DrawThemeTextEx_orig);
@@ -6689,6 +6742,7 @@ VOID LoadSettings()
 
     g_settings.FillBg = Wh_GetIntSetting(L"RenderingMod.ThemeBackground");
     g_settings.ClearTypeText = Wh_GetIntSetting(L"RenderingMod.ClearTypeText");
+    g_settings.ShadowText = Wh_GetIntSetting(L"RenderingMod.ShadowText");
     g_settings.TextGamma = Wh_GetIntSetting(L"RenderingMod.TextGamma");
     if (g_settings.TextGamma < 10 || g_settings.TextGamma > 50)
         g_settings.TextGamma = 14;
