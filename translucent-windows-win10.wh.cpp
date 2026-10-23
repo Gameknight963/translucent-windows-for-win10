@@ -114,6 +114,9 @@ This is caused by default by the AccentBlur API.❕
       $description: >-
        Uses native Windows shadow text rendering where supported. Disabled by default.
        Other text keeps the ClearType setting.
+    - ShadowOpacity: 15
+      $name: Shadow opacity (%)
+      $description: Strength of the added black text shadow, from 0 to 100. Does not change text opacity.
     - TextGamma: 14
       $name: 🔷 Text weight / thickness
       $description: >-
@@ -335,6 +338,7 @@ struct Settings{
     BOOL TextAlphaBlend = FALSE;
     BOOL ClearTypeText = FALSE;
     BOOL ShadowText = FALSE;
+    INT ShadowOpacity = 15;
     INT TextGamma = 14;
     BOOL SetSystemColors = FALSE;
     BOOL DarkModeTitlebars = TRUE;
@@ -928,21 +932,67 @@ struct NativeShadowGuard {
 
 INT TryDrawShadowText(HDC hdc, LPCWSTR text, INT count, LPRECT rect, UINT flags, COLORREF color)
 {
-    if (!g_settings.ShadowText || tl_nativeShadowText || !DrawShadowText_func || !text || !count || !rect ||
+    if (!g_settings.ShadowText || !g_settings.ShadowOpacity || tl_nativeShadowText || !DrawShadowText_func || !text || !count || !rect ||
         (flags & (DT_CALCRECT | DT_MODIFYSTRING)))
         return 0;
     (void)tl_bpGuard;
-    INT saved = SaveDC(hdc);
-    if (!saved)
+    if (IsRectEmpty(rect))
         return 0;
-    NativeShadowGuard guard;
-    SetTextAlign(hdc, TA_LEFT | TA_TOP);
-    SetBkMode(hdc, TRANSPARENT);
-    COLORREF shadow = GetRValue(color) * 299 + GetGValue(color) * 587 + GetBValue(color) * 114 < 128000
-        ? RGB(255, 255, 255) : RGB(0, 0, 0);
+
     INT offset = std::max(1, MulDiv(GetDeviceCaps(hdc, LOGPIXELSY), 1, 96));
-    INT result = DrawShadowText_func(hdc, text, count, rect, flags, color, shadow, offset, offset);
-    RestoreDC(hdc, saved);
+    RECT bounds = *rect;
+    InflateRect(&bounds, 6 + offset, 6 + offset);
+    BLENDFUNCTION blend = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+    BP_PAINTPARAMS params = { sizeof(params), BPPF_ERASE, nullptr, &blend };
+    HDC shadowDC = nullptr, textDC = nullptr;
+    HPAINTBUFFER shadowBuffer = BeginBufferedPaint(hdc, &bounds, BPBF_TOPDOWNDIB, &params, &shadowDC);
+    if (!shadowBuffer)
+        return 0;
+    HPAINTBUFFER textBuffer = BeginBufferedPaint(hdc, &bounds, BPBF_TOPDOWNDIB, &params, &textDC);
+    if (!textBuffer) {
+        EndBufferedPaint(shadowBuffer, FALSE);
+        return 0;
+    }
+
+    for (HDC dc : {shadowDC, textDC}) {
+        SelectObject(dc, GetCurrentObject(hdc, OBJ_FONT));
+        SetLayout(dc, GetLayout(hdc));
+        SetTextAlign(dc, TA_LEFT | TA_TOP);
+        SetBkMode(dc, TRANSPARENT);
+    }
+    NativeShadowGuard guard;
+    RECT shadowRect = *rect, textRect = *rect;
+    // White foreground keeps the native routine from substituting a white shadow for dark text.
+    INT shadowResult = DrawShadowText_func(shadowDC, text, count, &shadowRect, flags,
+        RGB(255, 255, 255), RGB(0, 0, 0), offset, offset);
+    SetTextColor(textDC, color);
+    INT result = DrawTextW_orig(textDC, text, count, &textRect, flags);
+    GdiFlush();
+
+    RGBQUAD *shadowPixels = nullptr, *textPixels = nullptr;
+    INT shadowStride = 0, textStride = 0;
+    if (!shadowResult || !result ||
+        FAILED(GetBufferedPaintBits(shadowBuffer, &shadowPixels, &shadowStride)) ||
+        FAILED(GetBufferedPaintBits(textBuffer, &textPixels, &textStride))) {
+        EndBufferedPaint(textBuffer, FALSE);
+        EndBufferedPaint(shadowBuffer, FALSE);
+        return 0;
+    }
+
+    INT opacity = std::clamp(g_settings.ShadowOpacity, 0, 100);
+    for (INT y = 0; y < RECTHEIGHT(&bounds); ++y) {
+        for (INT x = 0; x < RECTWIDTH(&bounds); ++x) {
+            RGBQUAD& output = shadowPixels[y * shadowStride + x];
+            const RGBQUAD& foreground = textPixels[y * textStride + x];
+            // Black contributes only alpha. Keep the foreground's premultiplied RGB intact.
+            INT shadowAlpha = std::max(0, INT(output.rgbReserved) - foreground.rgbReserved);
+            output = foreground;
+            output.rgbReserved += (shadowAlpha * opacity + 50) / 100;
+        }
+    }
+    EndBufferedPaint(textBuffer, FALSE);
+    if (FAILED(EndBufferedPaint(shadowBuffer, TRUE)))
+        return 0;
     return result;
 }
 
@@ -5854,7 +5904,7 @@ int __fastcall HookedDrawShadowTextEx(HDC hdc, LPCWSTR text, INT count, LPRECT r
     COLORREF textColor, COLORREF shadowColor, INT xOffset, INT yOffset, BYTE alpha, BOOL initBuffer)
 {
     NativeShadowGuard guard;
-    if (!g_IsSysThemeDarkMode && g_InsideExplorerProc) {
+    if (!guard.previous && !g_IsSysThemeDarkMode && g_InsideExplorerProc) {
         textColor = RGB(0, 0, 0);
         shadowColor = RGB(255, 255, 255);
     }
@@ -6747,6 +6797,7 @@ VOID LoadSettings()
     g_settings.FillBg = Wh_GetIntSetting(L"RenderingMod.ThemeBackground");
     g_settings.ClearTypeText = Wh_GetIntSetting(L"RenderingMod.ClearTypeText");
     g_settings.ShadowText = Wh_GetIntSetting(L"RenderingMod.ShadowText");
+    g_settings.ShadowOpacity = std::clamp(Wh_GetIntSetting(L"RenderingMod.ShadowOpacity"), 0, 100);
     g_settings.TextGamma = Wh_GetIntSetting(L"RenderingMod.TextGamma");
     if (g_settings.TextGamma < 10 || g_settings.TextGamma > 50)
         g_settings.TextGamma = 14;
