@@ -219,9 +219,6 @@ typedef BOOL(WINAPI* pShouldSystemUseDarkMode)();
 static auto ShouldSystemUseDarkMode = (pShouldSystemUseDarkMode)GetProcAddress(GetModuleHandle(L"uxtheme.dll"), MAKEINTRESOURCEA(138));
 BOOL g_IsSysThemeDarkMode = ShouldSystemUseDarkMode();
 
-// Treeview window handle used in our CNscTree_DrawDivider() hook to draw our alpha blended navigation pane divider
-thread_local HWND tl_hwndTreeView = nullptr;
-
 // Flag indicating current process is excluded from all modifications
 BOOL g_isCurrentProcessExcluded = FALSE;
 // Redirect per excluded process the system colors to hardcoded default ones 
@@ -241,6 +238,7 @@ std::wstring g_LastThemePath = GetCurrentWindowsThemePath();
 
 // Flag to prevent customizing text colors of Task Manager
 BOOL g_InsideTaskMgrProc = FALSE;
+BOOL g_InsideExplorerProc = FALSE;
 
 using PUNICODE_STRING = PVOID;
 constexpr auto MENUPOPUP_CLASS = L"#32768";
@@ -468,6 +466,7 @@ static decltype(&EnableThemeDialogTexture) EnableThemeDialogTexture_orig = nullp
 
 VOID NewWindowShown(HWND);
 VOID HandleEffects(HWND hWnd);
+VOID ColorizeSysColors();
 
 std::wstring GetWindowClass(HWND hWnd)
 {
@@ -503,10 +502,6 @@ BOOL IsWindowEligible(HWND hWnd)
     if (g_isCurrentProcessExcluded)
         return FALSE;
 
-    // store the treeview handle for alpha blending when drawing the divider in the navigation pane hook.
-    if (g_settings.FillBg && IsWindowClass(hWnd, L"SysTreeView32"))
-        tl_hwndTreeView = hWnd;
-    
     if (isWindowFlyout(hWnd) && g_settings.FlyoutsEffects)
         return TRUE;
     
@@ -913,152 +908,218 @@ struct BPGuard {
 };
 thread_local BPGuard tl_bpGuard;
 
+// Text rendering fixes from Translucent Windows 1.8.1 and 1.8.2.
+BOOL ExtTextOutBkPaint(HDC hdc, LPCRECT lprect, UINT options)
+{
+    if (!(options & ETO_OPAQUE))
+        return TRUE;
+
+    // Make opaque highlighted text background rectangle
+    if (GetBkColor(hdc) == GetSysColor(COLOR_HIGHLIGHT))
+    {
+        BP_PAINTPARAMS params = { sizeof(BP_PAINTPARAMS) };
+        HDC memDC = nullptr;
+        HPAINTBUFFER hpb = BeginBufferedPaint(hdc, lprect, BPBF_TOPDOWNDIB, &params, &memDC);
+        if (!hpb) {
+            Wh_Log(L"Failed BeginBufferedPaint error:0x%08x", GetLastError());
+            return FALSE;
+        }
+
+        FillRect(memDC, lprect, GetSysColorBrush(COLOR_HIGHLIGHT));
+        BufferedPaintMakeOpaque(hpb, lprect);
+
+        if (FAILED(EndBufferedPaint(hpb, TRUE))) {
+            Wh_Log(L"EndBufferedPaint failed error:0x%08x", GetLastError());
+            return FALSE;
+        }
+    }
+    else {
+        HBRUSH brush = CreateSolidBrush(GetBkColor(hdc));
+        FillRect(hdc, lprect, brush);
+        DeleteObject(brush);
+    }
+    return TRUE;
+}
+
+BOOL ExtTextOutComposition(HDC hdc, HPAINTBUFFER hpb, LPCRECT pTextRect)
+{
+    RGBQUAD* pPixels = nullptr;
+    INT rowWidth = 0; // stride
+    if (FAILED(GetBufferedPaintBits(hpb, &pPixels, &rowWidth))) {
+        EndBufferedPaint(hpb, FALSE);
+        Wh_Log(L"Failed GetBufferedPaintBits error:0x%08x", GetLastError());
+        return FALSE;
+    }
+
+    INT txtRcHeight = RECTHEIGHT(pTextRect);
+    INT txtRcWidth = RECTWIDTH(pTextRect);
+
+    BYTE pxBlue = GetBValue(GetTextColor(hdc));
+    BYTE pxGreen = GetGValue(GetTextColor(hdc));
+    BYTE pxRed = GetRValue(GetTextColor(hdc));
+
+    // Alpha composition
+    for (INT cy = 0; cy < txtRcHeight; ++cy) {
+        RGBQUAD* row = pPixels + (cy * rowWidth);
+        for (INT cx = 0; cx < txtRcWidth; ++cx) {
+            RGBQUAD& px = row[cx];
+            // Avoid background pixels
+            if ((px.rgbBlue | px.rgbGreen | px.rgbRed) == 0)
+                continue;
+
+            // Greyscale alpha
+            BYTE luma = g_settings.ClearTypeText ? std::max({px.rgbRed, px.rgbGreen, px.rgbBlue})
+                : (px.rgbBlue + (px.rgbGreen << 1) + px.rgbRed) >> 2;
+            // Gamma alpha correction
+            BYTE txtA = g_textAlphaGammaLUT[luma];
+
+            // Preserve the port's optional per-channel ClearType coverage.
+            px.rgbBlue     = (pxBlue * (g_settings.ClearTypeText ? px.rgbBlue : txtA)) >> 8;
+            px.rgbGreen    = (pxGreen * (g_settings.ClearTypeText ? px.rgbGreen : txtA)) >> 8;
+            px.rgbRed      = (pxRed * (g_settings.ClearTypeText ? px.rgbRed : txtA)) >> 8;
+            px.rgbReserved = txtA;
+        }
+    }
+
+    return TRUE;
+}
+
+VOID ExtTextOutAlignRect(HDC hdc, POINT &point, SIZE textSize, UINT textAlignment)
+{
+    // TA_BASELINE's bits are a superset of TA_BOTTOM's, and TA_CENTER's are
+    // a superset of TA_RIGHT's - mask the field and compare for equality
+    // rather than testing individual bits, or TA_CENTER/TA_BASELINE get
+    // misread as TA_RIGHT/TA_BOTTOM.
+    UINT vAlign = textAlignment & (TA_BOTTOM | TA_BASELINE);
+    UINT hAlign = textAlignment & (TA_RIGHT | TA_CENTER);
+    if (vAlign == TA_BASELINE)
+    {
+        TEXTMETRIC tm;
+        if (GetTextMetrics(hdc, &tm))
+            point.y = point.y - tm.tmAscent;
+    }
+    else if (vAlign == TA_BOTTOM)
+        point.y = point.y - textSize.cy;
+
+    if (hAlign == TA_CENTER)
+        point.x = point.x - textSize.cx / 2;
+    else if (hAlign == TA_RIGHT)
+        point.x = point.x - textSize.cx;
+
+    return;
+}
+
+VOID ExtTextOutDxWidth(UINT options, const INT* lpDx, UINT c, SIZE& textSize)
+{
+    INT dx = 0;
+    INT dy = 0;
+    UINT stride = (options & ETO_PDY) ? 2 : 1;
+
+    for (UINT i = 0; i < c; i++)
+    {
+        dx += lpDx[i * stride];
+        if (options & ETO_PDY)
+            dy += lpDx[i * stride + 1];
+    }
+
+    textSize.cx = std::max<LONG>(textSize.cx, dx);
+    if (options & ETO_PDY)
+        textSize.cy += abs(dy); // Expand height to encompass the vertical shifting
+}
+
+// Calculate text boundaries
+BOOL ExtTextOutCalcRect(HDC hdc, POINT point, UINT options, RECT& textRect,
+                        LPCRECT lprect, LPCWSTR lpString, UINT c, const INT* lpDx)
+{
+    SIZE textSize = {0};
+    UINT ta = GetTextAlign(hdc);
+
+    BOOL res = (options & ETO_GLYPH_INDEX)
+        ? GetTextExtentPointI(hdc, (WORD*)lpString, c, &textSize)
+        : GetTextExtentPoint32W(hdc, lpString, c, &textSize);
+    if (!res)
+        return FALSE;
+
+    if (lpDx)
+        ExtTextOutDxWidth(options, lpDx, c, textSize);
+    if (ta)
+        ExtTextOutAlignRect(hdc, point, textSize, ta);
+
+    SetRect(&textRect, point.x, point.y, point.x + textSize.cx, point.y + textSize.cy);
+
+    if (lprect) {
+        if (options & ETO_CLIPPED)                        // GDI clips the glyphs to it
+            IntersectRect(&textRect, &textRect, lprect);
+        if (options & ETO_OPAQUE)                         // ...and fills it
+            UnionRect(&textRect, &textRect, lprect);
+    }
+
+    return !IsRectEmpty(&textRect);
+}
+
+BOOL ExtTextOutShouldSkip(HDC hdc, UINT options, LPCRECT lprect, LPCWSTR lpString, INT c)
+{
+    if (!hdc || !lpString || !c || !options || GetTextAlign(hdc) & TA_UPDATECP)
+        return TRUE;
+
+    if (options & (ETO_OPAQUE | ETO_CLIPPED) && (!lprect || IsRectEmpty(lprect)))
+        return TRUE;
+
+    return FALSE;
+}
+
 BOOL WINAPI HookedExtTextOutW(
     HDC hdc,
     INT x,
     INT y,
     UINT options,
-    const RECT* lprect,
+    LPCRECT lprect,
     LPCWSTR lpString,
     UINT c,
     const INT* lpDx)
 {
-    if (!hdc || !lpString || !c)
+    if (ExtTextOutShouldSkip(hdc, options, lprect, lpString, c))
         return ExtTextOutW_orig(hdc, x, y, options, lprect, lpString, c, lpDx);
 
+    (void)tl_bpGuard;
     RECT textRect {0};
-    SIZE textSize = {0};
-    
-    // Boundary calculations
-    if (lprect)
-        textRect = *lprect;
-    else if (options & ETO_GLYPH_INDEX)
-    {
-        if (GetTextExtentPointI(hdc, (WORD*)lpString, c, &textSize))
-        {
-            textRect.left   = x;
-            textRect.top    = y - textSize.cy;
-            textRect.right  = x + textSize.cx;
-            textRect.bottom = textSize.cy + y;
-        }
-        else
-            return ExtTextOutW_orig(hdc, x, y, options, lprect, lpString, c, lpDx);
-    }
-    else if (options == ETO_IGNORELANGUAGE) {
-        if(!GetClipBox(hdc, &textRect))
-            return ExtTextOutW_orig(hdc, x, y, options, lprect, lpString, c, lpDx);
-    }
-    else if (options)
-    {
-        if (GetTextExtentPoint32W(hdc, lpString, c, &textSize))
-        {
-            textRect.left   = x;
-            textRect.top    = y - textSize.cy;
-            textRect.right  = x + textSize.cx;
-            textRect.bottom = textSize.cy + y; 
-        }
-        else
-            return ExtTextOutW_orig(hdc, x, y, options, lprect, lpString, c, lpDx);
-    }
-    else
+    if (!ExtTextOutCalcRect(hdc, {x, y}, options, textRect, lprect, lpString, c, lpDx))
         return ExtTextOutW_orig(hdc, x, y, options, lprect, lpString, c, lpDx);
-    
-    INT textRectWidth  = RECTWIDTH(&textRect);
-    INT textRectHeight = RECTHEIGHT(&textRect);
 
-    if (textRectWidth <= 0 || textRectHeight <= 0)
+    if (!ExtTextOutBkPaint(hdc, lprect, options))
         return ExtTextOutW_orig(hdc, x, y, options, lprect, lpString, c, lpDx);
 
     // https://devblogs.microsoft.com/oldnewthing/20110520-00/?p=10613
     BP_PAINTPARAMS params = { sizeof(BP_PAINTPARAMS) };
     params.dwFlags = BPPF_ERASE | BPPF_NOCLIP;
+    BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+    params.pBlendFunction = &blend;
+
     HDC memDC = nullptr;
-    // Acquire OS cached bitmap
     HPAINTBUFFER hpb = BeginBufferedPaint(hdc, &textRect, BPBF_TOPDOWNDIB, &params, &memDC);
     if (!hpb) {
         Wh_Log(L"Failed BeginBufferedPaint error:0x%08x", GetLastError());
         return ExtTextOutW_orig(hdc, x, y, options, lprect, lpString, c, lpDx);
     }
 
-    RGBQUAD* pPixels = nullptr;
-    INT rowWidth = 0; // stride in RGBQUADs, not bytes
-    if (FAILED(GetBufferedPaintBits(hpb, &pPixels, &rowWidth))) {
-        EndBufferedPaint(hpb, FALSE); // was missing on this path - leaked hpb
-        Wh_Log(L"Failed GetBufferedPaintBits error:0x%08x", GetLastError());
-        return ExtTextOutW_orig(hdc, x, y, options, lprect, lpString, c, lpDx);
-    }
-
-    // Original DC coloring values
-    COLORREF origTxtClr = GetTextColor(hdc);
-    COLORREF origBkClr = GetBkColor(hdc);
-    COLORREF highlightSysClr = GetSysColor(COLOR_HIGHLIGHT);
-    BOOL HighlightedText = (options & ETO_OPAQUE && origBkClr == highlightSysClr);
-
     SelectObject(memDC, GetCurrentObject(hdc, OBJ_FONT));
     SetTextAlign(memDC, GetTextAlign(hdc));
+    SetLayout(memDC, GetLayout(hdc));
     SetBkMode(memDC, TRANSPARENT);
     SetTextColor(memDC, RGB(255, 255, 255)); // White text mask
 
-    // For flyout/popup windows (menus, tooltips) we must NOT paint an opaque
-    // background fill - it destroys DWM translucency. The composited background
-    // is already in place; we only need to alpha-blend the text glyphs on top.
-    HWND hExtWnd = WindowFromDC(hdc);
-    BOOL isFlyoutDC = isWindowFlyout(hExtWnd);
-
-    if ((options & ETO_OPAQUE) && lprect && !isFlyoutDC) {
-        HBRUSH brush = CreateSolidBrush(origBkClr);
-        FillRect(hdc, lprect, brush);
-        DeleteObject(brush);
-    }
-
+    // Remove default background painting operation, as it done by our ExtTextOutBkPaint helper
     WINBOOL res = ExtTextOutW_orig(memDC, x, y, options & ~ETO_OPAQUE, lprect, lpString, c, lpDx);
 
-    // Compositing
-    for (INT cy = 0; cy < textRectHeight; ++cy) {
-        RGBQUAD* row = pPixels + (cy * rowWidth);
-        for (INT cx = 0; cx < textRectWidth; ++cx) {
-            RGBQUAD& p = row[cx];
+    // Text greyscale alpha composition
+    if (!ExtTextOutComposition(hdc, hpb, &textRect))
+        return ExtTextOutW_orig(hdc, x, y, options, lprect, lpString, c, lpDx);
 
-            if (g_settings.ClearTypeText) {
-                // ClearType subpixel mode: preserve per-channel subpixel values
-                BYTE maxSub = std::max({ p.rgbRed, p.rgbGreen, p.rgbBlue });
-                if (maxSub == 0 && !(options & ETO_OPAQUE))
-                    continue;
-
-                BYTE txtA = g_textAlphaGammaLUT[maxSub];
-                BYTE bgWeight = HighlightedText ? (255 - txtA) : 0;
-
-                // Modulate the subpixel values by text color
-                // For white text (255, 255, 255), this retains p.rgbRed, p.rgbGreen, p.rgbBlue verbatim
-                BYTE r = (BYTE)((GetRValue(origTxtClr) * p.rgbRed) >> 8);
-                BYTE g = (BYTE)((GetGValue(origTxtClr) * p.rgbGreen) >> 8);
-                BYTE b = (BYTE)((GetBValue(origTxtClr) * p.rgbBlue) >> 8);
-
-                p.rgbRed      = (BYTE)(r + ((GetRValue(origBkClr) * bgWeight) >> 8));
-                p.rgbGreen    = (BYTE)(g + ((GetGValue(origBkClr) * bgWeight) >> 8));
-                p.rgbBlue     = (BYTE)(b + ((GetBValue(origBkClr) * bgWeight) >> 8));
-                p.rgbReserved = bgWeight ? 255 : txtA;
-            } else {
-                // Grayscale antialiasing mode
-                BYTE luma = (BYTE)((p.rgbBlue + (p.rgbGreen << 1) + p.rgbRed) >> 2);
-                BYTE txtA = g_textAlphaGammaLUT[luma];
-                if (txtA == 0 && !(options & ETO_OPAQUE))
-                    continue;
-                // handle background transparency only for selected text
-                BYTE bgWeight = HighlightedText ? (255 - txtA) : 0;
-                p.rgbBlue     = (((GetBValue(origTxtClr) * txtA) + (GetBValue(origBkClr) * bgWeight)) >> 8);
-                p.rgbGreen    = (((GetGValue(origTxtClr) * txtA) + (GetGValue(origBkClr) * bgWeight)) >> 8);
-                p.rgbRed      = (((GetRValue(origTxtClr) * txtA) + (GetRValue(origBkClr) * bgWeight)) >> 8);
-                p.rgbReserved = bgWeight ? 255 : txtA;
-            }
-        }
+    // EndBufferedPaint executes AlphaBlend only on DIBs otherwise applies BitBlt.
+    if (FAILED(EndBufferedPaint(hpb, TRUE))) {
+        Wh_Log(L"EndBufferedPaint failed error:0x%08x", GetLastError());
+        return ExtTextOutW_orig(hdc, x, y, options, lprect, lpString, c, lpDx);
     }
-
-    BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-    AlphaBlend(hdc, textRect.left, textRect.top, textRectWidth, textRectHeight,
-            memDC, textRect.left, textRect.top, textRectWidth, textRectHeight, blend);
-
-    EndBufferedPaint(hpb, FALSE);
     return res;
 }
 
@@ -1230,6 +1291,10 @@ HRESULT WINAPI HookedGetColorTheme(HTHEME hTheme, INT iPartId, INT iStateId, INT
         *pColor = g_IsSysThemeDarkMode ? RGB(255, 255, 255) : *pColor;
         return S_OK;
     }  
+    else if (ThemeClassName == L"ControlPanel" && iPropId == TMT_TEXTCOLOR && iPartId == CPANEL_HELPLINK) {
+        *pColor = g_settings.AccentColorize ? g_settings.AccentColor : RGB(96, 205, 255);
+        return S_OK;
+    }
     else if (ThemeClassName == L"ControlPanelStyle" && iPropId == TMT_TEXTCOLOR)
     {
         if ((iPartId == CPANEL_BODYTITLE || iPartId == CPANEL_GROUPTEXT || iPartId == CPANEL_MESSAGETEXT 
@@ -1706,8 +1771,9 @@ public:
     VOID DeleteHDC(HDC& hDC)
     {
         if (hDC) {
-            DeleteObject((HBITMAP)GetCurrentObject(hDC, OBJ_BITMAP));
+            HBITMAP hBitmap = (HBITMAP)GetCurrentObject(hDC, OBJ_BITMAP);
             DeleteDC(std::exchange(hDC, nullptr));
+            DeleteObject(hBitmap);
         }
     }
 
@@ -4716,7 +4782,14 @@ HRESULT WINAPI HookedDrawThemeBackgroundEx(
 {    
     std::wstring ThemeClassName = GetThemeClass(hTheme);
 
-    if (ThemeClassName == L"ListView")
+    if (ThemeClassName == L"ScrollBar")
+    {
+        if (PaintScroll(hdc, iPartId, iStateId, pRect))
+            return S_OK;
+        else if (PaintScrollBarArrows(hdc, iPartId, iStateId, pRect))
+            return S_OK;
+    }
+    else if (ThemeClassName == L"ListView")
     {
         if (PaintListView(hdc, iPartId, iStateId, pRect))
             return S_OK;
@@ -4728,7 +4801,10 @@ HRESULT WINAPI HookedDrawThemeBackgroundEx(
     }
     else if (ThemeClassName == L"Button")
     {
-        if (PaintPushButton(hdc, iPartId, iStateId, pRect, &pOptions->rcClip))
+        RECT rcClip = *pRect;
+        if (pOptions && (pOptions->dwFlags & DTBG_CLIPRECT))
+            rcClip = pOptions->rcClip;
+        if (PaintPushButton(hdc, iPartId, iStateId, pRect, &rcClip))
             return S_OK;
         else if (PaintRadioButton(hdc, iPartId, iStateId, pRect))
             return S_OK;
@@ -4957,7 +5033,10 @@ static LRESULT WINAPI HookedDefWindowProcW(HWND hWnd, UINT msg, WPARAM wParam, L
 
             AcquireSRWLockExclusive(&g_ThemeChangeLock);
 
-            if (currentTheme != g_LastThemePath) 
+            COLORREF crAccent = g_settings.AccentColor;
+            if (g_settings.AccentColorize || g_settings.HighlightColorType == Settings::Highlight_Accent)
+                GetAccentColor(crAccent);
+            if (currentTheme != g_LastThemePath || g_settings.AccentColor != crAccent)
             {
                 g_LastThemePath = currentTheme; 
 
@@ -4966,8 +5045,10 @@ static LRESULT WINAPI HookedDefWindowProcW(HWND hWnd, UINT msg, WPARAM wParam, L
                 g_IsSysThemeDarkMode = ShouldSystemUseDarkMode();
                 g_AccentPalette.LoadAccentPalette();
                 
-                if (g_settings.AccentColorize)
-                    g_settings.AccentColorize = GetAccentColor(g_settings.AccentColor);
+                g_settings.AccentColor = crAccent;
+
+                if (g_settings.SetSystemColors)
+                    ColorizeSysColors();
 
                 AcquireSRWLockExclusive(&g_SysColorsLock);
                 for (HBRUSH& brush : g_themeCachedCustomSysColorBrushes) {
@@ -5158,7 +5239,7 @@ void __fastcall Hooked_BorderRect(HDC hdc, COLORREF color, LPRECT pRect, INT cxT
     auto ComposeRectBorders = [&](RECT rcBorder)
     {
         BP_PAINTPARAMS params = { sizeof(BP_PAINTPARAMS) };
-        params.dwFlags = BPPF_ERASE | BPPF_NONCLIENT;
+        params.dwFlags = BPPF_ERASE | BPPF_NOCLIP;
         HDC memDC = NULL;
 
         HPAINTBUFFER hpb = BeginBufferedPaint(hdc, &rcBorder, BPBF_TOPDOWNDIB, &params, &memDC);
@@ -5170,7 +5251,7 @@ void __fastcall Hooked_BorderRect(HDC hdc, COLORREF color, LPRECT pRect, INT cxT
         SetBkColor(memDC, color);
         ExtTextOutW(memDC, pRect->left, pRect->top, ETO_OPAQUE, pRect, NULL, NULL, NULL);
 
-        BufferedPaintSetAlpha(hpb, pRect, 255);
+        BufferedPaintMakeOpaque(hpb, pRect);
         EndBufferedPaint(hpb, TRUE);
     };
 
@@ -5716,6 +5797,18 @@ VOID User32Hooks(BOOL areSysColorsApplied)
     }
 }
 
+int (STDCALL *DrawShadowTextEx_orig)(HDC, LPCWSTR, INT, LPRECT, UINT, COLORREF, COLORREF, INT, INT, BYTE, BOOL);
+int STDCALL HookedDrawShadowTextEx(HDC hdc, LPCWSTR text, INT count, LPRECT rect, UINT format,
+    COLORREF textColor, COLORREF shadowColor, INT xOffset, INT yOffset, BYTE alpha, BOOL initBuffer)
+{
+    if (!g_IsSysThemeDarkMode && g_InsideExplorerProc) {
+        textColor = RGB(0, 0, 0);
+        shadowColor = RGB(255, 255, 255);
+    }
+    return DrawShadowTextEx_orig(hdc, text, count, rect, format,
+        textColor, shadowColor, xOffset, yOffset, alpha, initBuffer);
+}
+
 void (__fastcall *SHThemeDrawText_orig)(void*, HDC, INT, INT, DTTOPTS*, LPCWSTR, LPRECT, INT, UINT, INT, __int64, COLORREF, COLORREF);
 void __fastcall Hooked_SHThemeDrawText(void *a1, HDC a2, INT a3, INT a4, DTTOPTS *a5, LPCWSTR lpString, LPRECT lprc, INT a8, UINT format, INT a10, __int64 a11, COLORREF color, COLORREF a13)
 {
@@ -5735,7 +5828,6 @@ void __fastcall HookedSHThemeFillTextRect(HDC hDC, LPRECT lprc, COLORREF color, 
         return SHThemeFillTextRect_orig(hDC, lprc, color, sysColorCode);
     
     BP_PAINTPARAMS params = { sizeof(BP_PAINTPARAMS) };
-    params.dwFlags = BPPF_ERASE;
 
     HDC memDC = nullptr;
     HPAINTBUFFER hpb = BeginBufferedPaint(hDC, lprc, BPBF_TOPDOWNDIB, &params, &memDC); 
@@ -5758,7 +5850,6 @@ COLORREF __fastcall HookedFillRectClr(HDC hdc, LPRECT lprect, COLORREF color)
         return FillRectClr_orig(hdc, lprect, color);
         
     BP_PAINTPARAMS params = { sizeof(BP_PAINTPARAMS) };
-    params.dwFlags = BPPF_ERASE;
 
     HDC memDC = nullptr;
     HPAINTBUFFER hpb = BeginBufferedPaint(hdc, lprect, BPBF_TOPDOWNDIB, &params, &memDC);
@@ -5805,17 +5896,27 @@ void __fastcall HookedComboEx_OnDrawItem(struct COMBOEX *a1, struct tagDRAWITEMS
 VOID Comctl32Hooks()
 {
     WindhawkUtils::SYMBOL_HOOK comctl32_dll_hooks[] =
-    {        
+    {
+        #ifdef _WIN64
         {
             {
-                #ifdef _WIN64
-                    L"SHThemeDrawText"
-                #else
-                    L"_SHThemeDrawText@56"
-                #endif
+                L"SHThemeDrawText"
             },
             &SHThemeDrawText_orig,
             Hooked_SHThemeDrawText,
+            FALSE
+        },
+        #endif
+        {
+            {
+                #ifdef _WIN64
+                    L"DrawShadowTextEx"
+                #else
+                    L"_DrawShadowTextEx@44"
+                #endif
+            },
+            &DrawShadowTextEx_orig,
+            HookedDrawShadowTextEx,
             FALSE
         },
         // Symbols are inlined in ARM64, avoid hooking.
@@ -5912,6 +6013,7 @@ BOOL CThemeCache::CacheNavigationDivider()
 }
 
 // Render custom D2D alpha blended navigation pane divider
+HRESULT (THISCALL *CNscTree_GetWindowsDDT_orig)(class CNscTree*, HWND*, HWND*);
 void (THISCALL *CNscTree_DrawDivider_orig)(class CNscTree* , HDC, struct _TREEITEM*);
 void THISCALL Hooked_CNscTree_DrawDivider(CNscTree *__this, HDC hdc, struct _TREEITEM *hTreeItem)
 {
@@ -5922,23 +6024,10 @@ void THISCALL Hooked_CNscTree_DrawDivider(CNscTree *__this, HDC hdc, struct _TRE
         return;
     };
 
-    // As of Win11 26200.8737 - hwnd offsets 64-bit: offset 50, 32-bit: offset 61
-    auto GetTreeViewHWND = [&__this]() 
-    {
-        #ifdef _WIN64
-            return reinterpret_cast<HWND*>(__this)[50];
-        #else
-            return reinterpret_cast<HWND>(reinterpret_cast<DWORD*>(__this)[61]);
-        #endif
-    };
-
-    // TreeView window handle retrieved from NtUserCreateWindowEx hook
-    HWND hwndTreeView = tl_hwndTreeView;
-    if (!IsWindow(hwndTreeView) || !IsWindowClass(hwndTreeView, L"SysTreeView32"))
-        hwndTreeView = GetTreeViewHWND();
-    
-    if (!IsWindow(hwndTreeView) || !IsWindowClass(hwndTreeView, L"SysTreeView32"))
-        return Fallback(L"Not valid TreeView window");
+    HWND hwndTreeView = nullptr;
+    if (!CNscTree_GetWindowsDDT_orig ||
+        FAILED(CNscTree_GetWindowsDDT_orig(__this, &hwndTreeView, &hwndTreeView)))
+        return Fallback(L"Failed acquiring treeview window handle");
     
     RECT treeItemRect = {0};
     *reinterpret_cast<HTREEITEM*>(&treeItemRect) = (HTREEITEM)hTreeItem;
@@ -5978,7 +6067,19 @@ VOID ExplorerFrameHooks()
             &CNscTree_DrawDivider_orig,
             Hooked_CNscTree_DrawDivider,
             FALSE
-        },          
+        },
+        {
+            {
+                #ifdef _WIN64
+                    L"public: virtual long __cdecl CNscTree::GetWindowsDDT(struct HWND__ * *,struct HWND__ * *)"
+                #else
+                    L"public: virtual long __thiscall CNscTree::GetWindowsDDT(struct HWND__ * *,struct HWND__ * *)"
+                #endif
+            },
+            &CNscTree_GetWindowsDDT_orig,
+            nullptr,
+            TRUE
+        },
     };
 
     HMODULE hExplorerFrame = LoadLibraryEx(L"ExplorerFrame.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -6264,7 +6365,9 @@ static COLORREF GetCustomSysColor(INT nIndex)
         return RGB(96, 96, 96);
     else if (nIndex == COLOR_BTNHIGHLIGHT)
         return RGB(64, 64, 64);
-    else if (nIndex == COLOR_WINDOWTEXT || nIndex == COLOR_MENUTEXT || nIndex == COLOR_CAPTIONTEXT ||
+    else if (nIndex == COLOR_WINDOWTEXT)
+        return RGB(240, 240, 240);
+    else if (nIndex == COLOR_MENUTEXT || nIndex == COLOR_CAPTIONTEXT ||
              nIndex == COLOR_BTNTEXT || nIndex == COLOR_INFOTEXT || nIndex == COLOR_HIGHLIGHTTEXT)
         return RGB(255, 255, 255);
     else if (nIndex == COLOR_APPWORKSPACE)
@@ -6272,7 +6375,7 @@ static COLORREF GetCustomSysColor(INT nIndex)
     else if (nIndex == COLOR_HIGHLIGHT || nIndex == COLOR_MENUHILIGHT)
         return GetThemeHighlightColor();
     else if (nIndex == COLOR_BTNFACE)
-        return RGB(1, 1, 1);
+        return RGB(0, 0, 0);
     else if (nIndex == COLOR_GRAYTEXT)
         return RGB(128, 128, 128);
     else if (nIndex == COLOR_INACTIVECAPTIONTEXT)
@@ -6333,7 +6436,8 @@ VOID ColorizeSysColors()
 {
     // Stop recalling SetSysColors if syscolor changes have been applied.
     // SetSysColors redraws all top level windows causing flickering.
-    if (GetSysColor_orig(COLOR_WINDOW) == RGB(0, 0, 0))
+    if (GetSysColor_orig(COLOR_WINDOW) == RGB(0, 0, 0) &&
+        GetSysColor_orig(COLOR_HIGHLIGHT) == GetThemeHighlightColor())
         return;
 
     COLORREF aNewColors[ARRAYSIZE(SysColorElements)];
@@ -6627,7 +6731,8 @@ BOOL Wh_ModInit(VOID)
     if (g_isCurrentProcessExcluded)
         return TRUE;
 
-    if (InExplorerProcess())
+    g_InsideExplorerProc = InExplorerProcess();
+    if (g_InsideExplorerProc)
         g_explorerStylerNoBackgroundEffectAtom = AddAtom(L"WindhawkFileExplorerStylerNoBackgroundEffect");
     if (InTaskManagerProcess())
         g_InsideTaskMgrProc = TRUE;
