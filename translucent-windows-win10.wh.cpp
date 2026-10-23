@@ -918,6 +918,7 @@ thread_local bool tl_nativeShadowText = false;
 using DrawShadowTextEx_t = INT(STDCALL*)(HDC, LPCWSTR, INT, LPRECT, UINT,
     COLORREF, COLORREF, INT, INT, BYTE, BOOL);
 DrawShadowTextEx_t DrawShadowTextEx_orig = nullptr;
+decltype(&DrawShadowText) DrawShadowText_func = nullptr;
 
 struct NativeShadowGuard {
     bool previous = tl_nativeShadowText;
@@ -927,7 +928,7 @@ struct NativeShadowGuard {
 
 INT TryDrawShadowText(HDC hdc, LPCWSTR text, INT count, LPRECT rect, UINT flags, COLORREF color)
 {
-    if (!g_settings.ShadowText || tl_nativeShadowText || !DrawShadowTextEx_orig || !text || !count || !rect ||
+    if (!g_settings.ShadowText || tl_nativeShadowText || !DrawShadowText_func || !text || !count || !rect ||
         (flags & (DT_CALCRECT | DT_MODIFYSTRING)))
         return 0;
     (void)tl_bpGuard;
@@ -940,7 +941,7 @@ INT TryDrawShadowText(HDC hdc, LPCWSTR text, INT count, LPRECT rect, UINT flags,
     COLORREF shadow = GetRValue(color) * 299 + GetGValue(color) * 587 + GetBValue(color) * 114 < 128000
         ? RGB(255, 255, 255) : RGB(0, 0, 0);
     INT offset = std::max(1, MulDiv(GetDeviceCaps(hdc, LOGPIXELSY), 1, 96));
-    INT result = DrawShadowTextEx_orig(hdc, text, count, rect, flags, color, shadow, offset, offset, 160, TRUE);
+    INT result = DrawShadowText_func(hdc, text, count, rect, flags, color, shadow, offset, offset);
     RestoreDC(hdc, saved);
     return result;
 }
@@ -1115,7 +1116,7 @@ BOOL WINAPI HookedExtTextOutW(
     UINT c,
     const INT* lpDx)
 {
-    if (tl_nativeShadowText || ExtTextOutShouldSkip(hdc, options, lprect, lpString, c))
+    if (ExtTextOutShouldSkip(hdc, options, lprect, lpString, c))
         return ExtTextOutW_orig(hdc, x, y, options, lprect, lpString, c, lpDx);
 
     (void)tl_bpGuard;
@@ -6030,6 +6031,9 @@ VOID Comctl32Hooks()
         Wh_Log(L"Failed to load comctl32.dll");
         return;
     }
+
+    DrawShadowText_func = reinterpret_cast<decltype(DrawShadowText_func)>(
+        GetProcAddress(hComCtl32, "DrawShadowText"));
 
     if (!WindhawkUtils::HookSymbols(hComCtl32, comctl32_dll_hooks, ARRAYSIZE(comctl32_dll_hooks))) {
         Wh_Log(L"Failed to hook one or more symbol functions in comctl32.dll");
