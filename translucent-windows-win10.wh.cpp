@@ -2,7 +2,7 @@
 // @id              translucent-windows-win10
 // @name            Translucent Windows
 // @description     Enables native translucent effects in Windows 10
-// @version         1.1.0
+// @version         1.2.0
 // @author          Gameknight963 🐠
 // @github          https://github.com/Gameknight963
 // @include         *
@@ -24,13 +24,12 @@
 |:---:|:---:|
 | ![Default Theme](https://i.imgur.com/pkzdJLM.png) | ![Custom Theme](https://i.imgur.com/zIxMOiw.png) |
 
-- ## Translucent effects
+## Translucent effects
+
 | **Blur behind** | **Acrylic blur behind** |
 |:---:|:---:|
-| ![*Blur behind](https://i.imgur.com/EmWJNxY.png) | ![Acrylic blur behind*](https://i.imgur.com/CAAiJKe.png) |
-
+| ![Blur behind](https://i.imgur.com/EmWJNxY.png) | ![Acrylic blur behind](https://i.imgur.com/CAAiJKe.png) |
 | **Transparent gradient** | **Gradient** |
-|:---:|:---:|
 | ![Transparent gradient](https://i.imgur.com/cP2u90G.png) | ![Gradient](https://i.imgur.com/a9wklWa.png) |
 
 ## Credits 
@@ -112,11 +111,11 @@ This is caused by default by the AccentBlur API.❕
     - ShadowText: FALSE
       $name: 🔷 Shadow text
       $description: >-
-       Uses native Windows shadow text rendering where supported. Disabled by default.
-       Other text keeps the ClearType setting.
+       Introduces a very subtle shadow effect (configurable), which can help make ClearType text
+       more readable.
     - ShadowOpacity: 15
       $name: Shadow opacity (%)
-      $description: Strength of the added black text shadow, from 0 to 100. Does not change text opacity.
+      $description: Strength of the added black text shadow, from 0 to 100. 
     - TextGamma: 14
       $name: 🔷 Text weight / thickness
       $description: >-
